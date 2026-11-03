@@ -1,0 +1,7 @@
+{
+  "apiKey": "REPLACE_WITH_WEB_API_KEY",
+  "appId": "REPLACE_WITH_WEB_APP_ID",
+  "messagingSenderId": "REPLACE_WITH_SENDER_ID",
+  "projectId": "REPLACE_WITH_PROJECT_ID",
+  "vapidKey": "REPLACE_WITH_PUBLIC_WEB_PUSH_KEY"
+}

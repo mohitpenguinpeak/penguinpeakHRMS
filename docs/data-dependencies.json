@@ -1,0 +1,99 @@
+{
+  "lib/task_management_screen.dart": {
+    "tables": [
+      "leave_requests",
+      "profiles",
+      "task_comments",
+      "tasks"
+    ],
+    "rpcs": []
+  },
+  "lib/attendance_adjustment_screen.dart": {
+    "tables": [
+      "attendance_adjustment_requests",
+      "attendance_correction_requests",
+      "attendance_records",
+      "profiles"
+    ],
+    "rpcs": []
+  },
+  "lib/team_leave_calendar_screen.dart": {
+    "tables": [
+      "leave_requests",
+      "profiles"
+    ],
+    "rpcs": []
+  },
+  "lib/push_notification_service.dart": {
+    "tables": [
+      "push_tokens"
+    ],
+    "rpcs": [
+      "register_push_token"
+    ]
+  },
+  "lib/company_wall_screen.dart": {
+    "tables": [
+      "company_wall_comments",
+      "company_wall_posts",
+      "company_wall_reactions",
+      "profiles"
+    ],
+    "rpcs": []
+  },
+  "lib/chat_screen.dart": {
+    "tables": [
+      "conversation_participants",
+      "conversations",
+      "messages",
+      "profiles"
+    ],
+    "rpcs": []
+  },
+  "lib/attendance_management_screen.dart": {
+    "tables": [
+      "attendance_breaks",
+      "attendance_correction_requests",
+      "attendance_records",
+      "company_attendance_settings",
+      "profiles",
+      "tasks"
+    ],
+    "rpcs": []
+  },
+  "lib/leave_management_screen.dart": {
+    "tables": [
+      "leave_balances",
+      "leave_requests",
+      "profiles"
+    ],
+    "rpcs": [
+      "apply_for_leave",
+      "review_leave_by_hr",
+      "review_leave_by_manager",
+      "set_employee_leave_balance"
+    ]
+  },
+  "lib/login_screen.dart": {
+    "tables": [
+      "profiles"
+    ],
+    "rpcs": []
+  },
+  "lib/notification_bell.dart": {
+    "tables": [
+      "notifications"
+    ],
+    "rpcs": []
+  },
+  "lib/role_dashboard_screen.dart": {
+    "tables": [
+      "attendance_records",
+      "company_wall_posts",
+      "holidays",
+      "leave_requests",
+      "profiles"
+    ],
+    "rpcs": []
+  }
+}

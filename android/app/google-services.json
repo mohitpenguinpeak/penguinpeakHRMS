@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "727300852573",
+    "project_id": "penguinpeakhrms",
+    "storage_bucket": "penguinpeakhrms.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:727300852573:android:1a700c4e863935ba76f6b4",
+        "android_client_info": {
+          "package_name": "com.example.penguinpeak_hrms"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDFs1CxKuxrF39wasyi13qsBn-Ibd4i8eQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
