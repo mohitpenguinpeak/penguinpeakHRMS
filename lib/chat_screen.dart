@@ -3,7 +3,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ChatScreen extends StatefulWidget {
   final String role;
-  const ChatScreen({super.key, required this.role});
+  const ChatScreen({
+    super.key,
+    required this.role,
+    this.initialConversationId,
+    this.onTargetConsumed,
+  });
+  final String? initialConversationId;
+  final VoidCallback? onTargetConsumed;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -14,6 +21,7 @@ class _ChatScreenState extends State<ChatScreen> {
   RealtimeChannel? _realtimeChannel;
 
   bool _loading = true;
+  bool _initialConversationOpened = false;
   String? _error;
   List<Map<String, dynamic>> _conversations = [];
   List<Map<String, dynamic>> _profiles = [];
@@ -23,6 +31,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Attachment & Urgent Priority State
   bool _isUrgent = false;
+  String? _dismissedUrgentMessageId;
   String? _attachmentUrl;
   String _attachmentType = 'none'; // 'none', 'image', 'video', 'file'
 
@@ -188,6 +197,22 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (!mounted) return;
       setState(() => _loading = false);
+      if (!_initialConversationOpened && widget.initialConversationId != null) {
+        _initialConversationOpened = true;
+        widget.onTargetConsumed?.call();
+        final conversation = _conversations
+            .where((c) => c['id'] == widget.initialConversationId)
+            .firstOrNull;
+        if (conversation != null) {
+          await _loadMessages(conversation);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('This conversation is no longer available.'),
+            ),
+          );
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -672,7 +697,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           // Urgent Message Alert Banner
-          if (latestUrgentMsg != null)
+          if (latestUrgentMsg != null &&
+              _dismissedUrgentMessageId != latestUrgentMsg['id']?.toString())
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               color: Colors.red.withOpacity(0.2),
@@ -693,6 +719,16 @@ class _ChatScreenState extends State<ChatScreen> {
                         fontSize: 11,
                       ),
                     ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.red, size: 16),
+                    tooltip: 'Dismiss urgent alert',
+                    onPressed: () {
+                      setState(() {
+                        _dismissedUrgentMessageId = latestUrgentMsg?['id']
+                            ?.toString();
+                      });
+                    },
                   ),
                 ],
               ),
