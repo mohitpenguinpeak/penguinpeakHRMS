@@ -406,7 +406,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     final user = _supabase.auth.currentUser;
     if (user == null) return;
     final todayStr = DateTime.now().toIso8601String().split('T')[0];
-    final nowTime = DateTime.now().toUtc().toIso8601String();
+    final nowIso = DateTime.now().toUtc().toIso8601String();
 
     try {
       final existing = await _supabase
@@ -416,43 +416,42 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
           .eq('attendance_date', todayStr)
           .maybeSingle();
 
-      if (existing == null || existing['check_out'] != null) {
-        // Clock In / Check In Again
-        final now = DateTime.now();
-        final startTime = DateTime(now.year, now.month, now.day, 10, 30);
-        int lateMins = 0;
-        if (now.isAfter(startTime)) {
-          lateMins = now.difference(startTime).inMinutes;
-        }
-        String status = lateMins > 15 ? 'Late' : 'Present';
-
-        if (existing != null) {
-          final updated = await _supabase
-              .from('attendance_records')
-              .update({
-                'check_out': null,
-                'check_in': nowTime,
-                'status': status,
-              })
-              .eq('id', existing['id'])
-              .select()
-              .single();
-          setState(() => _myTodayAttendance = updated);
-        } else {
-          final newRec = await _supabase
-              .from('attendance_records')
-              .insert({
-                'employee_id': user.id,
-                'attendance_date': todayStr,
-                'check_in': nowTime,
-                'status': status,
-                'late_minutes': lateMins,
-              })
-              .select()
-              .single();
-          setState(() => _myTodayAttendance = newRec);
+      if (existing == null) {
+        // First check in today
+        final nowLocal = DateTime.now();
+        final startTime = DateTime(
+          nowLocal.year,
+          nowLocal.month,
+          nowLocal.day,
+          10,
+          30,
+        );
+        int lateMinutes = 0;
+        String status = 'Present';
+        if (nowLocal.isAfter(startTime)) {
+          lateMinutes = nowLocal.difference(startTime).inMinutes;
+          if (lateMinutes > 15) status = 'Late';
         }
 
+        final newRec = await _supabase
+            .from('attendance_records')
+            .insert({
+              'employee_id': user.id,
+              'attendance_date': todayStr,
+              'check_in': nowIso,
+              'status': status,
+              'late_minutes': lateMinutes,
+              'work_sessions': [
+                {
+                  'check_in': nowIso,
+                  'check_out': null,
+                  'work_duration_minutes': 0,
+                },
+              ],
+            })
+            .select()
+            .single();
+        setState(() => _myTodayAttendance = newRec);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -460,12 +459,81 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             backgroundColor: Colors.green,
           ),
         );
-      } else if (existing['check_in'] != null &&
-          existing['check_out'] == null) {
-        // Clock Out
+      } else if (existing['check_out'] != null) {
+        // Already checked out before, start a new session (Check In Again)
+        final sessions = List<Map<String, dynamic>>.from(
+          (existing['work_sessions'] as List? ?? []).map(
+            (s) => Map<String, dynamic>.from(s as Map),
+          ),
+        );
+        sessions.add({
+          'check_in': nowIso,
+          'check_out': null,
+          'work_duration_minutes': 0,
+        });
+
         final updated = await _supabase
             .from('attendance_records')
-            .update({'check_out': nowTime})
+            .update({
+              'work_sessions': sessions,
+              'check_out': null,
+              'updated_at': nowIso,
+            })
+            .eq('id', existing['id'])
+            .select()
+            .single();
+        setState(() => _myTodayAttendance = updated);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('🟢 Successfully checked in again!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        // Currently checked in -> Check Out
+        final sessions = List<Map<String, dynamic>>.from(
+          (existing['work_sessions'] as List? ?? []).map(
+            (s) => Map<String, dynamic>.from(s as Map),
+          ),
+        );
+        if (sessions.isEmpty) {
+          sessions.add({
+            'check_in': existing['check_in'],
+            'check_out': null,
+            'work_duration_minutes': 0,
+          });
+        }
+        final sessionIndex = sessions.lastIndexWhere(
+          (s) => s['check_out'] == null,
+        );
+        if (sessionIndex >= 0) {
+          final checkInTime = DateTime.parse(
+            sessions[sessionIndex]['check_in'].toString(),
+          );
+          final now = DateTime.now();
+          final grossMins = now.difference(checkInTime).inMinutes;
+          sessions[sessionIndex] = {
+            ...sessions[sessionIndex],
+            'check_out': nowIso,
+            'work_duration_minutes': grossMins.clamp(0, 1440),
+          };
+        }
+
+        final totalWorkMinutes = sessions.fold<int>(
+          0,
+          (sum, session) =>
+              sum + ((session['work_duration_minutes'] as num?)?.toInt() ?? 0),
+        );
+
+        final updated = await _supabase
+            .from('attendance_records')
+            .update({
+              'check_out': nowIso,
+              'work_sessions': sessions,
+              'work_duration_minutes': totalWorkMinutes,
+              'updated_at': nowIso,
+            })
             .eq('id', existing['id'])
             .select()
             .single();
