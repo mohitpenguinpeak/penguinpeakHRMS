@@ -4,7 +4,7 @@ class AppColors {
   static Color background(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFF090A0F) // Deep graphite charcoal
-          : const Color(0xFFF8F9FA); // Sophisticated warm off-white
+          : const Color(0xFFF4F5F7); // Pristine light SaaS workspace background
 
   static Color surface(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -14,22 +14,22 @@ class AppColors {
   static Color surfaceElevated(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFF1A1D24)
-          : const Color(0xFFF1F3F5);
+          : const Color(0xFFFFFFFF);
 
   static Color surfaceMuted(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFF1E222B)
-          : const Color(0xFFE9ECEF);
+          : const Color(0xFFEDF2F7);
 
   static Color textPrimary(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFFF1F3F5)
-          : const Color(0xFF111318);
+          : const Color(0xFF0F172A);
 
   static Color textSecondary(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFF9CA3AF)
-          : const Color(0xFF64748B);
+          : const Color(0xFF475569);
 
   static Color textTertiary(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -74,9 +74,9 @@ class AppShadows {
         BoxShadow(
           color: Theme.of(context).brightness == Brightness.dark
               ? Colors.black.withValues(alpha: 0.25)
-              : Colors.black.withValues(alpha: 0.05),
-          blurRadius: 10,
-          offset: const Offset(0, 4),
+              : Colors.black.withValues(alpha: 0.04),
+          blurRadius: 12,
+          offset: const Offset(0, 2),
         ),
       ];
 
@@ -85,7 +85,7 @@ class AppShadows {
           color: Theme.of(context).brightness == Brightness.dark
               ? Colors.black.withValues(alpha: 0.4)
               : Colors.black.withValues(alpha: 0.08),
-          blurRadius: 20,
+          blurRadius: 24,
           offset: const Offset(0, 8),
         ),
       ];
@@ -116,10 +116,10 @@ class GlassCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color:
-            backgroundColor ?? (isDark ? const Color(0xFF161618) : Colors.white),
+            backgroundColor ?? (isDark ? const Color(0xFF13151A) : Colors.white),
         borderRadius: radius,
         border: Border.all(
-          color: isDark ? const Color(0xFF2C2C30) : const Color(0xFFE4E4E7),
+          color: isDark ? const Color(0xFF262B35) : const Color(0xFFE2E8F0),
           width: 1,
         ),
         boxShadow: AppShadows.subtle(context),
