@@ -141,10 +141,13 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     return items;
   }
 
+  RealtimeChannel? _realtimeChannel;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+    _setupRealtime();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() => _now = DateTime.now());
@@ -152,9 +155,94 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     });
   }
 
+  void _setupRealtime() {
+    try {
+      _realtimeChannel = _supabase
+          .channel('public:workspace_all_changes')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            callback: (payload) {
+              if (mounted) {
+                _loadDataSilently();
+              }
+            },
+          )
+          .subscribe();
+    } catch (_) {}
+  }
+
+  Future<void> _loadDataSilently() async {
+    try {
+      final user = _supabase.auth.currentUser;
+      if (user == null) return;
+      final todayStr = DateTime.now().toIso8601String().split('T')[0];
+
+      final myProfile = await _supabase
+          .from('profiles')
+          .select(
+            'id, full_name, approval_status, role, created_at, '
+            'department, designation, phone, joining_date, manager_id, profile_details',
+          )
+          .eq('id', user.id)
+          .maybeSingle();
+
+      final result = await _supabase
+          .from('profiles')
+          .select(
+            'id, full_name, approval_status, role, created_at, '
+            'department, designation, phone, joining_date, manager_id, profile_details',
+          )
+          .order('created_at', ascending: false);
+
+      final attRes = await _supabase
+          .from('attendance_records')
+          .select('*')
+          .eq('employee_id', user.id)
+          .eq('attendance_date', todayStr)
+          .maybeSingle();
+
+      final leavesRes = await _supabase
+          .from('leave_requests')
+          .select('*')
+          .eq('manager_status', 'approved')
+          .eq('hr_status', 'approved')
+          .isFilter('cancelled_at', null)
+          .lte('start_date', todayStr)
+          .gte('end_date', todayStr);
+
+      final myBalancesRes = await _supabase
+          .from('leave_balances')
+          .select('leave_type, allocated_days, used_days')
+          .eq('employee_id', user.id);
+
+      final wallRes = await _supabase
+          .from('company_wall_posts')
+          .select('*')
+          .order('is_pinned', ascending: false)
+          .order('created_at', ascending: false)
+          .limit(5);
+
+      if (!mounted) return;
+      setState(() {
+        if (myProfile != null)
+          _myProfile = Map<String, dynamic>.from(myProfile);
+        _profiles = List<Map<String, dynamic>>.from(result);
+        _myTodayAttendance = attRes;
+        _onLeaveToday = List<Map<String, dynamic>>.from(leavesRes)
+            .where((row) => LeaveRequest(row).covers(DateTime.now()))
+            .map((row) => LeaveRequest(row).effectiveRow)
+            .toList();
+        _myLeaveBalances = List<Map<String, dynamic>>.from(myBalancesRes);
+        _announcements = List<Map<String, dynamic>>.from(wallRes);
+      });
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
+    _realtimeChannel?.unsubscribe();
     _wallPostController.dispose();
     super.dispose();
   }
