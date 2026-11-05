@@ -419,7 +419,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       if (existing == null || existing['check_out'] != null) {
         // Clock In / Check In Again
         final now = DateTime.now();
-        final startTime = DateTime(now.year, now.month, now.day, 9, 0);
+        final startTime = DateTime(now.year, now.month, now.day, 10, 30);
         int lateMins = 0;
         if (now.isAfter(startTime)) {
           lateMins = now.difference(startTime).inMinutes;
@@ -1611,20 +1611,20 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                   child: FilledButton.icon(
                     style: FilledButton.styleFrom(
                       backgroundColor: isCheckedOut
-                          ? Colors.grey
+                          ? Colors.green
                           : isCheckedIn
                           ? Colors.orange.shade800
                           : Colors.green,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    onPressed: isCheckedOut ? null : _handleClockInOut,
+                    onPressed: _handleClockInOut,
                     icon: Icon(
                       isCheckedIn ? Icons.logout : Icons.login,
                       size: 18,
                     ),
                     label: Text(
                       isCheckedOut
-                          ? 'Shift Completed'
+                          ? 'Check In Again'
                           : isCheckedIn
                           ? 'Check Out Now'
                           : 'Check In Now',
