@@ -1314,26 +1314,6 @@ class _AttendanceManagementScreenState
                       icon: const Icon(Icons.logout),
                       label: const Text('Check Out'),
                     ),
-                    if (_companySettings?['breaks_enabled'] == true) ...[
-                      OutlinedButton.icon(
-                        onPressed:
-                            (_actionInProgress ||
-                                !checkedIn ||
-                                checkedOut ||
-                                activeBreak)
-                            ? null
-                            : _startBreak,
-                        icon: const Icon(Icons.coffee),
-                        label: const Text('Start Break'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: (_actionInProgress || !activeBreak)
-                            ? null
-                            : _endBreak,
-                        icon: const Icon(Icons.work),
-                        label: const Text('End Break'),
-                      ),
-                    ],
                     OutlinedButton.icon(
                       onPressed: _submitCorrectionRequest,
                       icon: const Icon(Icons.edit_calendar),
@@ -1392,104 +1372,117 @@ class _AttendanceManagementScreenState
   }
 
   Widget _buildMonthlyAttendance() {
-    final grouped = <String, List<Map<String, dynamic>>>{};
-    for (final record in _myAttendance) {
-      final date = DateTime.tryParse(
-        record['attendance_date']?.toString() ?? '',
-      );
-      if (date == null) continue;
-      final month = '${date.year}-${date.month.toString().padLeft(2, '0')}';
-      grouped.putIfAbsent(month, () => []).add(record);
-    }
-    if (grouped.isEmpty)
+    if (_myAttendance.isEmpty) {
       return const Card(
         child: Padding(
-          padding: EdgeInsets.all(20),
-          child: Text('No attendance records yet.'),
+          padding: EdgeInsets.all(24),
+          child: Center(child: Text('No attendance records found.')),
         ),
       );
+    }
 
-    final months = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
-    return Column(
-      children: [
-        for (final month in months)
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ExpansionTile(
-              key: PageStorageKey('attendance-month:$month'),
-              leading: const Icon(Icons.calendar_month_outlined),
-              title: Text(
-                _monthLabel(month),
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              subtitle: Text(
-                '${grouped[month]!.length} days • ${_formatDuration(grouped[month]!.fold<int>(0, (sum, record) => sum + _recordWorkMinutes(record)))} worked',
-              ),
-              children: [
-                for (final record
-                    in grouped[month]!..sort(
-                      (a, b) => (b['attendance_date']?.toString() ?? '')
-                          .compareTo(a['attendance_date']?.toString() ?? ''),
-                    ))
-                  ExpansionTile(
-                    key: PageStorageKey(
-                      'attendance-day:${record['id'] ?? record['attendance_date']}',
-                    ),
-                    tilePadding: const EdgeInsets.symmetric(horizontal: 20),
-                    leading: const Icon(Icons.today_outlined, size: 20),
-                    title: Text(
-                      record['attendance_date']?.toString() ?? 'Unknown date',
-                    ),
-                    subtitle: Text(
-                      '${record['status'] ?? 'Unmarked'} • ${_formatDuration(_recordWorkMinutes(record))} • ${_sessionsForRecord(record).length} punch entries',
-                    ),
-                    children: [
-                      for (final entry in _sessionsForRecord(
-                        record,
-                      ).asMap().entries)
-                        ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 64,
-                          ),
-                          leading: CircleAvatar(
-                            radius: 14,
-                            child: Text(
-                              '${entry.key + 1}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          title: Text(
-                            '${_formatTime(entry.value['check_in']?.toString())}  →  ${_formatTime(entry.value['check_out']?.toString())}',
-                          ),
-                          subtitle: Text(
-                            'Worked ${_formatDuration(_durationForSession(record, entry.value, entry.key))} • Break ${_formatDuration(_breakMinutesAtIndex(record, entry.key))}',
-                          ),
-                        ),
-                      for (final br in List<Map<String, dynamic>>.from(
-                        (record['attendance_breaks'] as List? ?? []).map(
-                          (b) => Map<String, dynamic>.from(b as Map),
-                        ),
-                      ))
-                        ListTile(
-                          dense: true,
-                          contentPadding: const EdgeInsets.only(
-                            left: 100,
-                            right: 24,
-                          ),
-                          leading: const Icon(Icons.coffee_outlined, size: 18),
-                          title: Text(
-                            '${br['break_type'] ?? 'Break'} • ${_formatDuration((br['duration_minutes'] as num?)?.toInt() ?? 0)}',
-                          ),
-                          subtitle: Text(
-                            '${_formatTime(br['break_start']?.toString())} – ${_formatTime(br['break_end']?.toString())}',
-                          ),
-                        ),
-                    ],
-                  ),
-              ],
-            ),
+    return Card(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          headingRowColor: WidgetStateProperty.all(
+            Theme.of(context).colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
           ),
-      ],
+          columns: const [
+            DataColumn(
+              label: Text(
+                'Date',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            DataColumn(
+              label: Text(
+                'Status',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            DataColumn(
+              label: Text(
+                'In-Time',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            DataColumn(
+              label: Text(
+                'Out-Time',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            DataColumn(
+              label: Text(
+                'Net Work',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            DataColumn(
+              label: Text(
+                'Break Time',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+          rows: _myAttendance.map((record) {
+            final dateStr = record['attendance_date']?.toString() ?? '-';
+            final status = record['status']?.toString() ?? 'Present';
+            final inTime = _formatTime(record['check_in']);
+            final outTime = _formatTime(record['check_out']);
+            final workMins = _recordWorkMinutes(record);
+            final autoBreakMins = workMins >= 360 ? 30 : 0;
+            final netWork = (workMins - autoBreakMins).clamp(0, 1440);
+
+            Color statusColor = Colors.green;
+            if (status == 'Late') statusColor = Colors.orange;
+            if (status == 'Half Day') statusColor = Colors.purple;
+            if (status == 'Absent') statusColor = Colors.red;
+
+            return DataRow(
+              cells: [
+                DataCell(
+                  Text(
+                    dateStr,
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                ),
+                DataCell(
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                DataCell(Text(inTime)),
+                DataCell(Text(outTime)),
+                DataCell(
+                  Text(
+                    _formatDuration(netWork),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                DataCell(Text(_formatDuration(autoBreakMins))),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
     );
   }
 
