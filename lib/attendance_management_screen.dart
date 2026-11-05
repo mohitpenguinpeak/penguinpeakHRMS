@@ -2602,49 +2602,152 @@ class _AttendanceManagementScreenState
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: (MediaQuery.sizeOf(context).width - 96)
-                      .clamp(0, 260)
-                      .toDouble(),
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      labelText: 'Search employee',
-                      prefixIcon: Icon(Icons.search),
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (v) => setState(() => _searchQuery = v),
-                  ),
-                ),
-                DropdownButton<String>(
-                  value: _departmentFilter,
-                  items: departments
-                      .map(
-                        (d) =>
-                            DropdownMenuItem(value: d, child: Text('Dept: $d')),
-                      )
-                      .toList(),
-                  onChanged: (v) =>
-                      setState(() => _departmentFilter = v ?? 'All'),
-                ),
-                DropdownButton<String>(
-                  value: _statusFilter,
-                  items: const [
-                    DropdownMenuItem(value: 'All', child: Text('Status: All')),
-                    DropdownMenuItem(value: 'Present', child: Text('Present')),
-                    DropdownMenuItem(value: 'Late', child: Text('Late')),
-                    DropdownMenuItem(
-                      value: 'Half Day',
-                      child: Text('Half Day'),
-                    ),
-                  ],
-                  onChanged: (v) => setState(() => _statusFilter = v ?? 'All'),
-                ),
-              ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 650;
+                if (isWide) {
+                  return Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: TextField(
+                          decoration: const InputDecoration(
+                            labelText: 'Search employee',
+                            prefixIcon: Icon(Icons.search),
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          onChanged: (v) => setState(() => _searchQuery = v),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        flex: 2,
+                        child: DropdownButtonFormField<String>(
+                          value: _departmentFilter,
+                          decoration: const InputDecoration(
+                            labelText: 'Department',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: departments
+                              .map(
+                                (d) =>
+                                    DropdownMenuItem(value: d, child: Text(d)),
+                              )
+                              .toList(),
+                          onChanged: (v) =>
+                              setState(() => _departmentFilter = v ?? 'All'),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        flex: 2,
+                        child: DropdownButtonFormField<String>(
+                          value: _statusFilter,
+                          decoration: const InputDecoration(
+                            labelText: 'Status',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'All',
+                              child: Text('All Statuses'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Present',
+                              child: Text('Present'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Late',
+                              child: Text('Late'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'Half Day',
+                              child: Text('Half Day'),
+                            ),
+                          ],
+                          onChanged: (v) =>
+                              setState(() => _statusFilter = v ?? 'All'),
+                        ),
+                      ),
+                    ],
+                  );
+                } else {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: 'Search employee',
+                          prefixIcon: Icon(Icons.search),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _departmentFilter,
+                              decoration: const InputDecoration(
+                                labelText: 'Department',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: departments
+                                  .map(
+                                    (d) => DropdownMenuItem(
+                                      value: d,
+                                      child: Text(d),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (v) => setState(
+                                () => _departmentFilter = v ?? 'All',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _statusFilter,
+                              decoration: const InputDecoration(
+                                labelText: 'Status',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'All',
+                                  child: Text('All Statuses'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'Present',
+                                  child: Text('Present'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'Late',
+                                  child: Text('Late'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'Half Day',
+                                  child: Text('Half Day'),
+                                ),
+                              ],
+                              onChanged: (v) =>
+                                  setState(() => _statusFilter = v ?? 'All'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+              },
             ),
           ),
         ),
