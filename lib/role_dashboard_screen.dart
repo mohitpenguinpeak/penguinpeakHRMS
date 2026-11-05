@@ -1,3 +1,7 @@
+import 'features/notifications/domain/notification_destination.dart';
+import 'features/hr/domain/hr_module.dart';
+import 'features/hr/presentation/hr_workspace.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,6 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'features/leave/domain/leave_request.dart';
 
 import 'app_theme.dart';
+import 'core/theme/design_system.dart';
 import 'features/organization/presentation/organization_chart.dart';
 import 'shared/widgets/adaptive_layout.dart';
 import 'features/dashboard/presentation/holiday_list.dart';
@@ -62,6 +67,24 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
   bool _loading = true;
   String? _error;
   int _selectedIndex = 0;
+  String? _notificationRecordId;
+  int _notificationOpenRevision = 0;
+  void _openNotificationDestination(NotificationDestination destination) {
+    final index = _menuItems.indexWhere(
+      (item) => item.label == destination.label,
+    );
+    if (index < 0) return;
+    setState(() {
+      _selectedIndex = index;
+      _notificationRecordId = destination.recordId;
+      _notificationOpenRevision++;
+    });
+  }
+
+  void _consumeNotificationTarget() {
+    _notificationRecordId = null;
+  }
+
   String _searchQuery = '';
   String _roleFilter = 'all';
   String _statusFilter = 'all';
@@ -109,6 +132,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       const _DashboardItem('Chat', Icons.chat_bubble_outline),
       const _DashboardItem('Company Wall', Icons.feed_outlined),
       const _DashboardItem('Team Calendar', Icons.calendar_month_outlined),
+      for (final module in HrModule.all)
+        _DashboardItem(module.label, module.icon),
       const _DashboardItem('My Profile', Icons.person_outline),
       const _DashboardItem('Settings', Icons.settings_outlined),
     ]);
@@ -400,7 +425,10 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
   void _navigateToModule(String moduleName) {
     final idx = _menuItems.indexWhere((item) => item.label == moduleName);
     if (idx != -1) {
-      setState(() => _selectedIndex = idx);
+      setState(() {
+        _selectedIndex = idx;
+        _notificationRecordId = null;
+      });
     }
   }
 
@@ -549,7 +577,10 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     BuildContext tileContext, {
     required bool isDrawer,
   }) {
-    setState(() => _selectedIndex = index);
+    setState(() {
+      _selectedIndex = index;
+      _notificationRecordId = null;
+    });
 
     if (isDrawer) {
       Navigator.of(tileContext).pop();
@@ -602,7 +633,10 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               ],
             ),
             actions: [
-              NotificationBell(role: widget.role),
+              NotificationBell(
+                role: widget.role,
+                onNavigate: _openNotificationDestination,
+              ),
               IconButton(
                 tooltip: 'Switch theme',
                 onPressed: () {
@@ -724,6 +758,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                   'Leave' => 'TIME & ATTENDANCE',
                   'Tasks' => 'WORK MANAGEMENT',
                   'Chat' => 'COLLABORATION',
+                  'Onboarding' => 'HR SERVICES',
                   'My Profile' => 'PERSONAL',
                   _ => null,
                 };
@@ -861,14 +896,47 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 if (page == 'Leave') LeaveManagementScreen(role: widget.role),
                 if (page == 'Attendance')
                   AttendanceManagementScreen(role: widget.role),
-                if (page == 'Tasks') TaskManagementScreen(role: widget.role),
-                if (page == 'Chat') ChatScreen(role: widget.role),
+                if (page == 'Tasks')
+                  TaskManagementScreen(
+                    key: ValueKey('task-notice-$_notificationOpenRevision'),
+                    role: widget.role,
+                    initialTaskId: _notificationRecordId,
+                    onTargetConsumed: _consumeNotificationTarget,
+                  ),
+                if (page == 'Chat')
+                  ChatScreen(
+                    key: ValueKey('chat-notice-$_notificationOpenRevision'),
+                    role: widget.role,
+                    initialConversationId: _notificationRecordId,
+                    onTargetConsumed: _consumeNotificationTarget,
+                  ),
                 if (page == 'Company Wall')
-                  CompanyWallScreen(role: widget.role),
+                  CompanyWallScreen(
+                    key: ValueKey('wall-notice-$_notificationOpenRevision'),
+                    role: widget.role,
+                    initialPostId: _notificationRecordId,
+                    onTargetConsumed: _consumeNotificationTarget,
+                  ),
                 if (page == 'Team Calendar')
                   TeamLeaveCalendarScreen(role: widget.role),
                 if (page == 'Attendance Adjustments')
-                  AttendanceAdjustmentScreen(role: widget.role),
+                  AttendanceAdjustmentScreen(
+                    key: ValueKey(
+                      'attendance-notice-$_notificationOpenRevision',
+                    ),
+                    role: widget.role,
+                    initialRequestId: _notificationRecordId,
+                    onTargetConsumed: _consumeNotificationTarget,
+                  ),
+                for (final module in HrModule.all)
+                  if (page == module.label)
+                    HrWorkspace(
+                      key: ValueKey('${module.id}:$_notificationOpenRevision'),
+                      initialRecordId: _notificationRecordId,
+                      onTargetConsumed: _consumeNotificationTarget,
+                      module: module,
+                      role: widget.role,
+                    ),
                 if (page == 'My Profile') _buildProfile(),
                 if (page == 'Settings') _buildSettings(),
               ],
@@ -890,6 +958,11 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       children: [
         // Welcome Banner
         _buildWelcomeBanner(name, colors),
+
+        const SizedBox(height: 20),
+
+        // Vibrant KPI Grid (SmartHR Style)
+        _buildVibrantKpiGrid(),
 
         const SizedBox(height: 24),
 
@@ -1067,6 +1140,112 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     );
   }
 
+  Widget _buildVibrantKpiGrid() {
+    final totalEmployees = _profiles.length;
+    final approvedCount = _profiles
+        .where((p) => p['approval_status'] == 'approved')
+        .length;
+    final pendingCount = _profiles
+        .where((p) => p['approval_status'] == 'pending')
+        .length;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossCount = constraints.maxWidth >= 900 ? 4 : 2;
+        return GridView.count(
+          crossAxisCount: crossCount,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: 1.5,
+          children: [
+            _kpiTile(
+              'Total Employees',
+              '$totalEmployees Active',
+              '+4% this mo',
+              Icons.groups,
+              const Color(0xFF6366F1),
+            ),
+            _kpiTile(
+              'Approved Roster',
+              '$approvedCount Verified',
+              '100% secure',
+              Icons.verified,
+              const Color(0xFF10B981),
+            ),
+            _kpiTile(
+              'Pending Approvals',
+              '$pendingCount Action Req',
+              pendingCount > 0 ? 'Review now' : 'All clear',
+              Icons.pending_actions,
+              const Color(0xFFF59E0B),
+            ),
+            _kpiTile(
+              'On Leave Today',
+              '${_onLeaveToday.length} Members',
+              'Team roster',
+              Icons.event_available,
+              const Color(0xFFEC4899),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _kpiTile(
+    String title,
+    String value,
+    String subtitle,
+    IconData icon,
+    Color color,
+  ) {
+    return GlassCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: color, size: 22),
+              ),
+              StatusBadge(label: subtitle, color: color),
+            ],
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.5,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildQuickAccessCard() {
     final items = [
       {'label': 'Apply Leave', 'icon': Icons.event_note, 'module': 'Leave'},
@@ -1117,10 +1296,13 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
                 maxCrossAxisExtent: 130,
                 mainAxisSpacing: 10,
                 crossAxisSpacing: 10,
+                mainAxisExtent: MediaQuery.sizeOf(context).width < 600
+                    ? 112
+                    : null,
                 childAspectRatio: 1.1,
               ),
               itemCount: items.length,
@@ -1207,7 +1389,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            AdaptiveRow(
               children: [
                 const Text(
                   'Today\'s Attendance & Time Tracker',
@@ -1324,7 +1506,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            Row(
+            AdaptiveRow(
               children: [
                 Expanded(
                   child: FilledButton.icon(
@@ -1377,7 +1559,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            AdaptiveRow(
               children: [
                 const Text(
                   'On Leave Today',
@@ -1460,7 +1642,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            AdaptiveRow(
               children: [
                 const Icon(Icons.pending_actions, color: Colors.orange),
                 const SizedBox(width: 8),
@@ -1495,7 +1677,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Theme.of(context).dividerColor),
                 ),
-                child: Row(
+                child: AdaptiveRow(
                   children: [
                     CircleAvatar(
                       child: Text((p['full_name'] ?? 'U')[0].toUpperCase()),
@@ -1777,7 +1959,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            AdaptiveRow(
               children: [
                 const Text(
                   'Upcoming Company Holidays',
@@ -1879,27 +2061,30 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'post',
-                  label: Text('Post'),
-                  icon: Icon(Icons.edit_note, size: 16),
-                ),
-                ButtonSegment(
-                  value: 'announcement',
-                  label: Text('Announcement'),
-                  icon: Icon(Icons.campaign, size: 16),
-                ),
-                ButtonSegment(
-                  value: 'praise',
-                  label: Text('Praise'),
-                  icon: Icon(Icons.thumb_up, size: 16),
-                ),
-              ],
-              selected: {_composerCategory},
-              onSelectionChanged: (set) =>
-                  setState(() => _composerCategory = set.first),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: 'post',
+                    label: Text('Post'),
+                    icon: Icon(Icons.edit_note, size: 16),
+                  ),
+                  ButtonSegment(
+                    value: 'announcement',
+                    label: Text('Announcement'),
+                    icon: Icon(Icons.campaign, size: 16),
+                  ),
+                  ButtonSegment(
+                    value: 'praise',
+                    label: Text('Praise'),
+                    icon: Icon(Icons.thumb_up, size: 16),
+                  ),
+                ],
+                selected: {_composerCategory},
+                onSelectionChanged: (set) =>
+                    setState(() => _composerCategory = set.first),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -1938,7 +2123,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            AdaptiveRow(
               children: [
                 const Text(
                   'Recent Announcements',
