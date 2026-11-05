@@ -43,6 +43,8 @@ class _AttendanceManagementScreenState
   int _selectedYear = DateTime.now().year;
   int _selectedMonth = DateTime.now().month;
   bool _showDetailedTable = false;
+  bool _isCalendarView = true;
+  List<Map<String, dynamic>> _myApprovedLeaves = [];
 
   String? get _uid => _db.auth.currentUser?.id;
   bool get _isPrivileged =>
@@ -143,6 +145,16 @@ class _AttendanceManagementScreenState
           .select('*')
           .order('created_at', ascending: false);
       _correctionRequests = List<Map<String, dynamic>>.from(corrRes);
+
+      // Load approved leaves for leave-aware attendance calculation
+      final leavesRes = await _db
+          .from('leave_requests')
+          .select('*')
+          .eq('employee_id', uid)
+          .eq('manager_status', 'approved')
+          .eq('hr_status', 'approved')
+          .isFilter('cancelled_at', null);
+      _myApprovedLeaves = List<Map<String, dynamic>>.from(leavesRes);
 
       if (!mounted) return;
       setState(() => _loading = false);
@@ -1158,11 +1170,18 @@ class _AttendanceManagementScreenState
         Wrap(
           spacing: 12,
           runSpacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             const Text(
               'Attendance Management',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
+            if (_isHrOrAdmin)
+              OutlinedButton.icon(
+                onPressed: _editCompanyPolicyDialog,
+                icon: const Icon(Icons.settings_outlined, size: 16),
+                label: const Text('Policy Settings'),
+              ),
             if (_isPrivileged)
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -1374,6 +1393,117 @@ class _AttendanceManagementScreenState
     );
   }
 
+  Future<void> _editCompanyPolicyDialog() async {
+    final startController = TextEditingController(
+      text: _companySettings?['work_start_time'] ?? '09:00:00',
+    );
+    final endController = TextEditingController(
+      text: _companySettings?['work_end_time'] ?? '17:00:00',
+    );
+    final graceController = TextEditingController(
+      text: (_companySettings?['grace_period_minutes'] ?? 15).toString(),
+    );
+    final halfDayController = TextEditingController(
+      text: (_companySettings?['half_day_hours'] ?? 4.0).toString(),
+    );
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Manage Attendance Policy & Working Hours'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: startController,
+                decoration: const InputDecoration(
+                  labelText: 'Work Start Time (HH:MM:SS)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: endController,
+                decoration: const InputDecoration(
+                  labelText: 'Work End Time (HH:MM:SS)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: graceController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Grace Period (Minutes)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: halfDayController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Half Day Threshold Hours',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              try {
+                final policyData = {
+                  'work_start_time': startController.text.trim(),
+                  'work_end_time': endController.text.trim(),
+                  'grace_period_minutes':
+                      int.tryParse(graceController.text.trim()) ?? 15,
+                  'half_day_hours':
+                      double.tryParse(halfDayController.text.trim()) ?? 4.0,
+                  'updated_at': DateTime.now().toUtc().toIso8601String(),
+                };
+
+                final existing = await _db
+                    .from('company_attendance_settings')
+                    .select('id')
+                    .maybeSingle();
+                if (existing != null) {
+                  await _db
+                      .from('company_attendance_settings')
+                      .update(policyData)
+                      .eq('id', existing['id']);
+                } else {
+                  await _db
+                      .from('company_attendance_settings')
+                      .insert(policyData);
+                }
+
+                if (!mounted) return;
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ Attendance policy updated successfully!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                await _loadData(showLoading: false);
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Failed to update policy: $e')),
+                );
+              }
+            },
+            child: const Text('Save Policy'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMonthlyAttendance() {
     final targetDate = DateTime(_selectedYear, _selectedMonth, 1);
     final monthName = _monthLabel(
@@ -1396,14 +1526,37 @@ class _AttendanceManagementScreenState
       }
     }
 
+    final leaveDates = <String, String>{};
+    for (final l in _myApprovedLeaves) {
+      final start = DateTime.tryParse(l['start_date']?.toString() ?? '');
+      final end = DateTime.tryParse(l['end_date']?.toString() ?? '');
+      final lType = l['leave_type']?.toString() ?? 'Leave';
+      if (start != null && end != null) {
+        for (
+          var curr = start;
+          !curr.isAfter(end);
+          curr = curr.add(const Duration(days: 1))
+        ) {
+          final dStr =
+              '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
+          leaveDates[dStr] = lType;
+        }
+      }
+    }
+
     for (int d = 1; d <= daysInMonth; d++) {
       final curr = DateTime(targetDate.year, targetDate.month, d);
       final isWeekend =
           curr.weekday == DateTime.saturday || curr.weekday == DateTime.sunday;
       if (!isWeekend) {
-        expectedWorkingDays++;
         final dateStr =
             '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
+
+        if (leaveDates.containsKey(dateStr)) {
+          continue;
+        }
+
+        expectedWorkingDays++;
         final rec = attendanceByDate[dateStr];
         if (rec != null) {
           final st = rec['status']?.toString();
@@ -1444,38 +1597,62 @@ class _AttendanceManagementScreenState
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.chevron_left),
-                      onPressed: () {
-                        setState(() {
-                          if (_selectedMonth == 1) {
-                            _selectedMonth = 12;
-                            _selectedYear--;
-                          } else {
-                            _selectedMonth--;
-                          }
-                        });
-                      },
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left),
+                          onPressed: () {
+                            setState(() {
+                              if (_selectedMonth == 1) {
+                                _selectedMonth = 12;
+                                _selectedYear--;
+                              } else {
+                                _selectedMonth--;
+                              }
+                            });
+                          },
+                        ),
+                        Text(
+                          monthName,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right),
+                          onPressed: () {
+                            setState(() {
+                              if (_selectedMonth == 12) {
+                                _selectedMonth = 1;
+                                _selectedYear++;
+                              } else {
+                                _selectedMonth++;
+                              }
+                            });
+                          },
+                        ),
+                      ],
                     ),
-                    Text(
-                      monthName,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                    ToggleButtons(
+                      isSelected: [_isCalendarView, !_isCalendarView],
+                      onPressed: (idx) =>
+                          setState(() => _isCalendarView = idx == 0),
+                      borderRadius: BorderRadius.circular(8),
+                      constraints: const BoxConstraints(
+                        minHeight: 32,
+                        minWidth: 36,
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right),
-                      onPressed: () {
-                        setState(() {
-                          if (_selectedMonth == 12) {
-                            _selectedMonth = 1;
-                            _selectedYear++;
-                          } else {
-                            _selectedMonth++;
-                          }
-                        });
-                      },
+                      children: const [
+                        Tooltip(
+                          message: 'Calendar View',
+                          child: Icon(Icons.calendar_month, size: 18),
+                        ),
+                        Tooltip(
+                          message: 'List / Log View',
+                          child: Icon(Icons.view_list, size: 18),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1591,137 +1768,345 @@ class _AttendanceManagementScreenState
           ),
         ),
         const SizedBox(height: 20),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Daily Attendance Grid',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const SizedBox(height: 16),
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 7,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
-                    childAspectRatio: 1.1,
-                  ),
-                  itemCount: daysInMonth,
-                  itemBuilder: (context, idx) {
-                    final d = idx + 1;
-                    final curr = DateTime(targetDate.year, targetDate.month, d);
-                    final isWeekend =
-                        curr.weekday == DateTime.saturday ||
-                        curr.weekday == DateTime.sunday;
-                    final dateStr =
-                        '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
-                    final rec = attendanceByDate[dateStr];
-                    final st = rec?['status']?.toString();
+        if (_isCalendarView)
+          _buildCalendarGridView(
+            daysInMonth,
+            attendanceByDate,
+            targetDate,
+            leaveDates,
+          )
+        else
+          _buildAttendanceLogListView(),
+      ],
+    );
+  }
 
-                    Color cellColor = isWeekend
-                        ? Colors.grey.withValues(alpha: 0.1)
-                        : Colors.grey.withValues(alpha: 0.2);
-                    String statusText = isWeekend ? 'Weekly Off' : 'No Entry';
-                    IconData cellIcon = isWeekend
-                        ? Icons.weekend
-                        : Icons.remove;
+  Widget _buildCalendarGridView(
+    int daysInMonth,
+    Map<String, Map<String, dynamic>> attendanceByDate,
+    DateTime targetDate,
+    Map<String, String> leaveDates,
+  ) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Daily Attendance Calendar',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+                childAspectRatio: 1.1,
+              ),
+              itemCount: daysInMonth,
+              itemBuilder: (context, idx) {
+                final d = idx + 1;
+                final curr = DateTime(targetDate.year, targetDate.month, d);
+                final isWeekend =
+                    curr.weekday == DateTime.saturday ||
+                    curr.weekday == DateTime.sunday;
+                final dateStr =
+                    '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
+                final rec = attendanceByDate[dateStr];
+                final st = rec?['status']?.toString();
+                final leaveType = leaveDates[dateStr];
 
-                    if (st == 'Present') {
-                      cellColor = Colors.green.withValues(alpha: 0.2);
-                      statusText = 'Present';
-                      cellIcon = Icons.check;
-                    } else if (st == 'Late') {
-                      cellColor = Colors.orange.withValues(alpha: 0.2);
-                      statusText = 'Late';
-                      cellIcon = Icons.timer;
-                    } else if (st == 'Half Day') {
-                      cellColor = Colors.purple.withValues(alpha: 0.2);
-                      statusText = 'Half Day';
-                      cellIcon = Icons.star_half;
-                    } else if (st == 'Absent') {
-                      cellColor = Colors.red.withValues(alpha: 0.2);
-                      statusText = 'Absent';
-                      cellIcon = Icons.close;
-                    }
+                Color cellColor = isWeekend
+                    ? Colors.grey.withValues(alpha: 0.1)
+                    : Colors.grey.withValues(alpha: 0.2);
+                String statusText = isWeekend ? 'Weekly Off' : 'No Entry';
+                IconData cellIcon = isWeekend ? Icons.weekend : Icons.remove;
 
-                    return InkWell(
-                      onTap: () {
-                        if (rec != null) {
-                          _showDayDetailDialog(curr, rec);
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'No attendance record for $dateStr ($statusText)',
-                              ),
-                            ),
-                          );
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: cellColor,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Theme.of(context).dividerColor,
+                if (leaveType != null) {
+                  cellColor = Colors.blue.withValues(alpha: 0.2);
+                  statusText = 'On Leave ($leaveType)';
+                  cellIcon = Icons.event_note;
+                } else if (st == 'Present') {
+                  cellColor = Colors.green.withValues(alpha: 0.2);
+                  statusText = 'Present';
+                  cellIcon = Icons.check;
+                } else if (st == 'Late') {
+                  cellColor = Colors.orange.withValues(alpha: 0.2);
+                  statusText = 'Late';
+                  cellIcon = Icons.timer;
+                } else if (st == 'Half Day') {
+                  cellColor = Colors.purple.withValues(alpha: 0.2);
+                  statusText = 'Half Day';
+                  cellIcon = Icons.star_half;
+                } else if (st == 'Absent') {
+                  cellColor = Colors.red.withValues(alpha: 0.2);
+                  statusText = 'Absent';
+                  cellIcon = Icons.close;
+                }
+
+                return InkWell(
+                  onTap: () {
+                    if (rec != null) {
+                      _showDayDetailDialog(curr, rec);
+                    } else if (leaveType != null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('On Leave: $leaveType on $dateStr'),
+                        ),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'No attendance record for $dateStr ($statusText)',
                           ),
                         ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              '$d',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Icon(
-                              cellIcon,
-                              size: 14,
-                              color:
-                                  cellColor ==
-                                      Colors.green.withValues(alpha: 0.2)
-                                  ? Colors.green
-                                  : Colors.grey,
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
+                      );
+                    }
                   },
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: cellColor,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '$d',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Icon(
+                          cellIcon,
+                          size: 14,
+                          color:
+                              cellColor == Colors.green.withValues(alpha: 0.2)
+                              ? Colors.green
+                              : leaveType != null
+                              ? Colors.blue
+                              : Colors.grey,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAttendanceLogListView() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Attendance Log',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                Text(
+                  '${_myAttendance.length} entries',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
             ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Center(
-          child: TextButton.icon(
-            onPressed: () =>
-                setState(() => _showDetailedTable = !_showDetailedTable),
-            icon: Icon(
-              _showDetailedTable ? Icons.expand_less : Icons.expand_more,
+            const SizedBox(height: 12),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowColor: WidgetStateProperty.all(
+                  Theme.of(context).colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.5),
+                ),
+                columns: const [
+                  DataColumn(
+                    label: Text(
+                      'DATE',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      'ATTENDANCE VISUAL',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      'EFFECTIVE HOURS',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      'GROSS HOURS',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      'ARRIVAL',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  DataColumn(
+                    label: Text(
+                      'LOG',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
+                rows: _myAttendance.map((record) {
+                  final dateStr = record['attendance_date']?.toString() ?? '-';
+                  final status = record['status']?.toString() ?? 'Present';
+                  final inTime = _formatTime(record['check_in']);
+                  final outTime = _formatTime(record['check_out']);
+                  final workMins = _recordWorkMinutes(record);
+                  final autoBreakMins = workMins >= 360 ? 30 : 0;
+                  final netWork = (workMins - autoBreakMins).clamp(0, 1440);
+
+                  DateTime? dt = DateTime.tryParse(dateStr);
+                  String formattedDate = dateStr;
+                  if (dt != null) {
+                    const weekdays = [
+                      'Mon',
+                      'Tue',
+                      'Wed',
+                      'Thu',
+                      'Fri',
+                      'Sat',
+                      'Sun',
+                    ];
+                    const months = [
+                      'Jan',
+                      'Feb',
+                      'Mar',
+                      'Apr',
+                      'May',
+                      'Jun',
+                      'Jul',
+                      'Aug',
+                      'Sep',
+                      'Oct',
+                      'Nov',
+                      'Dec',
+                    ];
+                    formattedDate =
+                        '${months[dt.month - 1]} ${dt.day.toString().padLeft(2, '0')}, ${weekdays[dt.weekday - 1]}';
+                  }
+
+                  Color statusColor = Colors.green;
+                  if (status == 'Late') statusColor = Colors.orange;
+                  if (status == 'Half Day') statusColor = Colors.purple;
+                  if (status == 'Absent') statusColor = Colors.red;
+
+                  return DataRow(
+                    cells: [
+                      DataCell(
+                        Text(
+                          formattedDate,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      DataCell(
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            status.toUpperCase(),
+                            style: TextStyle(
+                              color: statusColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      DataCell(
+                        Text(
+                          netWork > 0
+                              ? _formatDuration(netWork)
+                              : 'No Time Logged',
+                          style: TextStyle(
+                            color: netWork > 0 ? null : Colors.grey,
+                          ),
+                        ),
+                      ),
+                      DataCell(
+                        Text(
+                          workMins > 0 ? _formatDuration(workMins) : '—',
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                      DataCell(
+                        Text(
+                          inTime != '-' ? 'In: $inTime (Out: $outTime)' : '—',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      DataCell(
+                        IconButton(
+                          icon: const Icon(Icons.more_horiz, size: 18),
+                          tooltip: 'View Details',
+                          onPressed: () => _showDayDetailDialog(
+                            dt ?? DateTime.now(),
+                            record,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
             ),
-            label: Text(
-              _showDetailedTable
-                  ? 'Hide detailed attendance logs'
-                  : 'View detailed attendance logs',
-            ),
-          ),
+          ],
         ),
-        if (_showDetailedTable) ...[
-          const SizedBox(height: 12),
-          _buildDetailedDataTable(),
-        ],
-      ],
+      ),
     );
   }
 
