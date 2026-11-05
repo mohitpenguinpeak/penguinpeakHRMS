@@ -5,59 +5,64 @@ final ValueNotifier<ThemeMode> appThemeMode = ValueNotifier<ThemeMode>(
 );
 
 class AppThemes {
-  static const orange = Color(0xFFF59E0B);
+  static const primaryAccent = Color(0xFF6366F1); // Electric Indigo
+  static const orange = primaryAccent; // Compatibility alias for refined palette
 
   static ThemeData get dark => _workspace(
-    ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: orange,
-        brightness: Brightness.dark,
-        primary: orange,
-      ),
-      scaffoldBackgroundColor: const Color(0xFF101010),
-      appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF101010)),
-      cardTheme: CardThemeData(
-        color: const Color(0xFF1A1A1A),
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Color(0xFF303030)),
+        ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: primaryAccent,
+            brightness: Brightness.dark,
+            primary: primaryAccent,
+          ),
+          scaffoldBackgroundColor: const Color(0xFF090A0F), // Graphite charcoal
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFF090A0F),
+            elevation: 0,
+          ),
+          cardTheme: CardThemeData(
+            color: const Color(0xFF13151A),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFF262B35)),
+            ),
+          ),
         ),
-      ),
-    ),
-  );
+      );
 
   static ThemeData get light => _workspace(
-    ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.light,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: orange,
-        brightness: Brightness.light,
-        primary: const Color(0xFFB85C00),
-      ),
-      scaffoldBackgroundColor: const Color(0xFFBDBDBD),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFFBDBDBD),
-        foregroundColor: Color(0xFF171717),
-      ),
-      cardTheme: CardThemeData(
-        color: Colors.white,
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Color(0xFFE5E5E5)),
+        ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.light,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: primaryAccent,
+            brightness: Brightness.light,
+            primary: primaryAccent,
+          ),
+          scaffoldBackgroundColor: const Color(0xFFF8F9FA), // Off-white
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFFF8F9FA),
+            foregroundColor: Color(0xFF111318),
+            elevation: 0,
+          ),
+          cardTheme: CardThemeData(
+            color: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFFE2E8F0)),
+            ),
+          ),
         ),
-      ),
-    ),
-  );
+      );
 
   static ThemeData _workspace(ThemeData theme) {
     final colors = theme.colorScheme;
     final border = OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       borderSide: BorderSide(color: colors.outlineVariant),
     );
     return theme.copyWith(
@@ -65,7 +70,7 @@ class AppThemes {
         filled: true,
         fillColor: theme.cardColor,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 14,
+          horizontal: 16,
           vertical: 14,
         ),
         border: border,
@@ -78,15 +83,16 @@ class AppThemes {
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
           ),
+          elevation: 0,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
           ),
         ),
       ),
