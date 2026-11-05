@@ -40,6 +40,9 @@ class _AttendanceManagementScreenState
 
   // Selected tab in employee/HR view
   int _selectedTab = 0; // 0: My Attendance, 1: HR Overview (if privileged), 2: Correction Requests
+  int _selectedYear = DateTime.now().year;
+  int _selectedMonth = DateTime.now().month;
+  bool _showDetailedTable = false;
 
   String? get _uid => _db.auth.currentUser?.id;
   bool get _isPrivileged =>
@@ -1372,15 +1375,445 @@ class _AttendanceManagementScreenState
   }
 
   Widget _buildMonthlyAttendance() {
-    if (_myAttendance.isEmpty) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: Text('No attendance records found.')),
-        ),
-      );
+    final targetDate = DateTime(_selectedYear, _selectedMonth, 1);
+    final monthName = _monthLabel(
+      '${targetDate.year}-${targetDate.month.toString().padLeft(2, '0')}',
+    );
+
+    final daysInMonth = DateTime(targetDate.year, targetDate.month + 1, 0).day;
+
+    int expectedWorkingDays = 0;
+    int completedDays = 0;
+    int lateDaysCount = 0;
+    int absentDaysCount = 0;
+    int totalMonthWorkMins = 0;
+
+    final attendanceByDate = <String, Map<String, dynamic>>{};
+    for (final r in _myAttendance) {
+      final dateStr = r['attendance_date']?.toString();
+      if (dateStr != null) {
+        attendanceByDate[dateStr] = r;
+      }
     }
 
+    for (int d = 1; d <= daysInMonth; d++) {
+      final curr = DateTime(targetDate.year, targetDate.month, d);
+      final isWeekend =
+          curr.weekday == DateTime.saturday || curr.weekday == DateTime.sunday;
+      if (!isWeekend) {
+        expectedWorkingDays++;
+        final dateStr =
+            '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
+        final rec = attendanceByDate[dateStr];
+        if (rec != null) {
+          final st = rec['status']?.toString();
+          if (st == 'Present' || st == 'Half Day') {
+            completedDays++;
+          } else if (st == 'Late') {
+            completedDays++;
+            lateDaysCount++;
+          } else if (st == 'Absent') {
+            absentDaysCount++;
+          }
+          totalMonthWorkMins += _recordWorkMinutes(rec);
+        }
+      }
+    }
+
+    final percentage = expectedWorkingDays > 0
+        ? (completedDays / expectedWorkingDays).clamp(0.0, 1.0)
+        : 0.0;
+    final remainingDays = (expectedWorkingDays - completedDays).clamp(
+      0,
+      expectedWorkingDays,
+    );
+    final expectedMonthlyHoursMins = expectedWorkingDays * 8 * 60;
+    final hoursProgress = expectedMonthlyHoursMins > 0
+        ? (totalMonthWorkMins / expectedMonthlyHoursMins).clamp(0.0, 1.0)
+        : 0.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      onPressed: () {
+                        setState(() {
+                          if (_selectedMonth == 1) {
+                            _selectedMonth = 12;
+                            _selectedYear--;
+                          } else {
+                            _selectedMonth--;
+                          }
+                        });
+                      },
+                    ),
+                    Text(
+                      monthName,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      onPressed: () {
+                        setState(() {
+                          if (_selectedMonth == 12) {
+                            _selectedMonth = 1;
+                            _selectedYear++;
+                          } else {
+                            _selectedMonth++;
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Monthly Attendance Progress',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '$completedDays / $expectedWorkingDays working days (${(percentage * 100).toStringAsFixed(0)}%)',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: LinearProgressIndicator(
+                    value: percentage,
+                    minHeight: 12,
+                    backgroundColor: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
+                    color: const Color(0xFF6366F1),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '$completedDays completed',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    Text(
+                      '$remainingDays working days remaining',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+                const Divider(height: 32),
+                Wrap(
+                  spacing: 24,
+                  runSpacing: 12,
+                  children: [
+                    _metricBadge(
+                      'Present',
+                      '$completedDays',
+                      Icons.check_circle,
+                      Colors.green,
+                    ),
+                    _metricBadge(
+                      'Late',
+                      '$lateDaysCount',
+                      Icons.timer,
+                      Colors.orange,
+                    ),
+                    _metricBadge(
+                      'Remaining',
+                      '$remainingDays',
+                      Icons.schedule,
+                      Colors.blue,
+                    ),
+                    _metricBadge(
+                      'Absent',
+                      '$absentDaysCount',
+                      Icons.cancel,
+                      Colors.red,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Working Hours',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      '${_formatDuration(totalMonthWorkMins)} / ${_formatDuration(expectedMonthlyHoursMins)} expected (${(hoursProgress * 100).toStringAsFixed(0)}%)',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    value: hoursProgress,
+                    minHeight: 8,
+                    backgroundColor: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
+                    color: Colors.teal,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Daily Attendance Grid',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    crossAxisSpacing: 8,
+                    mainAxisSpacing: 8,
+                    childAspectRatio: 1.1,
+                  ),
+                  itemCount: daysInMonth,
+                  itemBuilder: (context, idx) {
+                    final d = idx + 1;
+                    final curr = DateTime(targetDate.year, targetDate.month, d);
+                    final isWeekend =
+                        curr.weekday == DateTime.saturday ||
+                        curr.weekday == DateTime.sunday;
+                    final dateStr =
+                        '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
+                    final rec = attendanceByDate[dateStr];
+                    final st = rec?['status']?.toString();
+
+                    Color cellColor = isWeekend
+                        ? Colors.grey.withValues(alpha: 0.1)
+                        : Colors.grey.withValues(alpha: 0.2);
+                    String statusText = isWeekend ? 'Weekly Off' : 'No Entry';
+                    IconData cellIcon = isWeekend
+                        ? Icons.weekend
+                        : Icons.remove;
+
+                    if (st == 'Present') {
+                      cellColor = Colors.green.withValues(alpha: 0.2);
+                      statusText = 'Present';
+                      cellIcon = Icons.check;
+                    } else if (st == 'Late') {
+                      cellColor = Colors.orange.withValues(alpha: 0.2);
+                      statusText = 'Late';
+                      cellIcon = Icons.timer;
+                    } else if (st == 'Half Day') {
+                      cellColor = Colors.purple.withValues(alpha: 0.2);
+                      statusText = 'Half Day';
+                      cellIcon = Icons.star_half;
+                    } else if (st == 'Absent') {
+                      cellColor = Colors.red.withValues(alpha: 0.2);
+                      statusText = 'Absent';
+                      cellIcon = Icons.close;
+                    }
+
+                    return InkWell(
+                      onTap: () {
+                        if (rec != null) {
+                          _showDayDetailDialog(curr, rec);
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'No attendance record for $dateStr ($statusText)',
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: cellColor,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: Theme.of(context).dividerColor,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              '$d',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Icon(
+                              cellIcon,
+                              size: 14,
+                              color:
+                                  cellColor ==
+                                      Colors.green.withValues(alpha: 0.2)
+                                  ? Colors.green
+                                  : Colors.grey,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: TextButton.icon(
+            onPressed: () =>
+                setState(() => _showDetailedTable = !_showDetailedTable),
+            icon: Icon(
+              _showDetailedTable ? Icons.expand_less : Icons.expand_more,
+            ),
+            label: Text(
+              _showDetailedTable
+                  ? 'Hide detailed attendance logs'
+                  : 'View detailed attendance logs',
+            ),
+          ),
+        ),
+        if (_showDetailedTable) ...[
+          const SizedBox(height: 12),
+          _buildDetailedDataTable(),
+        ],
+      ],
+    );
+  }
+
+  Widget _metricBadge(String label, String count, IconData icon, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              count,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _showDayDetailDialog(DateTime date, Map<String, dynamic> record) {
+    final dateStr = _formatDate(date);
+    final status = record['status']?.toString() ?? 'Present';
+    final inTime = _formatTime(record['check_in']);
+    final outTime = _formatTime(record['check_out']);
+    final workMins = _recordWorkMinutes(record);
+    final autoBreakMins = workMins >= 360 ? 30 : 0;
+    final netWork = (workMins - autoBreakMins).clamp(0, 1440);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Attendance Details • $dateStr'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _keyVal('Status', status),
+              _keyVal('Check In', inTime),
+              _keyVal('Check Out', outTime),
+              _keyVal('Net Work', _formatDuration(netWork)),
+              _keyVal('Break Time', _formatDuration(autoBreakMins)),
+              _keyVal(
+                'Shift',
+                '${_companySettings?['work_start_time'] ?? '09:00'} – ${_companySettings?['work_end_time'] ?? '17:00'}',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _submitCorrectionRequest();
+            },
+            icon: const Icon(Icons.edit_calendar, size: 16),
+            label: const Text('Request Correction'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _keyVal(String k, String v) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(k, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+          Text(
+            v,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailedDataTable() {
     return Card(
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
