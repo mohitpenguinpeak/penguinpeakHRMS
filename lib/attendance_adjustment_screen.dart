@@ -8,7 +8,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AttendanceAdjustmentScreen extends StatefulWidget {
   final String role;
-  const AttendanceAdjustmentScreen({super.key, required this.role});
+  const AttendanceAdjustmentScreen({
+    super.key,
+    required this.role,
+    this.initialRequestId,
+    this.onTargetConsumed,
+  });
+  final String? initialRequestId;
+  final VoidCallback? onTargetConsumed;
 
   @override
   State<AttendanceAdjustmentScreen> createState() =>
@@ -20,6 +27,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
   final SupabaseClient _db = Supabase.instance.client;
   late TabController _tabController;
   bool _loading = true;
+  bool _targetConsumed = false;
   String? _error;
   bool _refreshInProgress = false;
   Timer? _syncTimer;
@@ -96,6 +104,25 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
           );
 
       if (!mounted) return;
+      if (!_targetConsumed && widget.initialRequestId != null) {
+        _targetConsumed = true;
+        widget.onTargetConsumed?.call();
+        final target = _requests
+            .where((r) => r['id'] == widget.initialRequestId)
+            .firstOrNull;
+        if (_canReview && target != null)
+          _tabController.index = target['employee_id'] == _uid ? 0 : 1;
+      }
+      if (widget.initialRequestId != null)
+        _requests.sort(
+          (a, b) => a['id'] == widget.initialRequestId
+              ? -1
+              : b['id'] == widget.initialRequestId
+              ? 1
+              : (b['created_at']?.toString() ?? '').compareTo(
+                  a['created_at']?.toString() ?? '',
+                ),
+        );
       setState(() => _loading = false);
     } catch (e) {
       if (!mounted) return;

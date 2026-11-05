@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 import '../data/hr_repository.dart';
 import '../domain/hr_module.dart';
@@ -504,6 +507,83 @@ class _RecordDetailState extends State<_RecordDetail> {
   void initState() {
     super.initState();
     refresh();
+  }
+
+  Future<void> _generateAndPrintPayslipPdf(Map<String, dynamic> data) async {
+    final pdf = pw.Document();
+    final basic = double.tryParse(data['basic'].toString()) ?? 0;
+    final allowances = double.tryParse(data['allowances'].toString()) ?? 0;
+    final deductions = double.tryParse(data['deductions'].toString()) ?? 0;
+    final netSalary = basic + allowances - deductions;
+
+    pdf.addPage(
+      pw.Page(
+        build: (pw.Context context) {
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Header(
+                level: 0,
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'PENGUINPEAK TECHNOLOGIES',
+                      style: pw.TextStyle(
+                        fontSize: 18,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                    pw.Text(
+                      'SALARY SLIP',
+                      style: const pw.TextStyle(
+                        fontSize: 14,
+                        color: PdfColors.grey700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Employee Name: ${widget.employeeName}',
+                style: const pw.TextStyle(fontSize: 14),
+              ),
+              pw.Text(
+                'Salary Period: ${data['period'] ?? 'N/A'}',
+                style: const pw.TextStyle(fontSize: 14),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Table.fromTextArray(
+                headers: ['Earnings / Deductions', 'Amount (INR)'],
+                data: [
+                  ['Basic Salary', basic.toStringAsFixed(2)],
+                  ['Allowances', allowances.toStringAsFixed(2)],
+                  ['Deductions', deductions.toStringAsFixed(2)],
+                  ['Net Salary Payable', netSalary.toStringAsFixed(2)],
+                ],
+              ),
+              pw.SizedBox(height: 40),
+              pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Text(
+                  'Authorized Signature',
+                  style: const pw.TextStyle(
+                    fontSize: 12,
+                    color: PdfColors.grey600,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: 'Payslip_${data['period'] ?? 'Statement'}.pdf',
+    );
   }
 
   @override

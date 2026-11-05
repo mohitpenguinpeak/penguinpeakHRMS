@@ -6,7 +6,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CompanyWallScreen extends StatefulWidget {
   final String role;
-  const CompanyWallScreen({super.key, required this.role});
+  const CompanyWallScreen({
+    super.key,
+    required this.role,
+    this.initialPostId,
+    this.onTargetConsumed,
+  });
+  final String? initialPostId;
+  final VoidCallback? onTargetConsumed;
 
   @override
   State<CompanyWallScreen> createState() => _CompanyWallScreenState();
@@ -15,6 +22,7 @@ class CompanyWallScreen extends StatefulWidget {
 class _CompanyWallScreenState extends State<CompanyWallScreen> {
   final SupabaseClient _db = Supabase.instance.client;
   bool _loading = true;
+  bool _targetConsumed = false;
   String? _error;
   List<Map<String, dynamic>> _posts = [];
   List<Map<String, dynamic>> _profiles = [];
@@ -50,6 +58,19 @@ class _CompanyWallScreenState extends State<CompanyWallScreen> {
       _posts = List<Map<String, dynamic>>.from(postsRes);
 
       if (!mounted) return;
+      if (widget.initialPostId != null) {
+        _posts.sort(
+          (a, b) => a['id'] == widget.initialPostId
+              ? -1
+              : b['id'] == widget.initialPostId
+              ? 1
+              : 0,
+        );
+        if (!_targetConsumed) {
+          _targetConsumed = true;
+          widget.onTargetConsumed?.call();
+        }
+      }
       setState(() => _loading = false);
     } catch (e) {
       if (!mounted) return;

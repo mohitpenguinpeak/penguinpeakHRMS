@@ -28,11 +28,31 @@ Deno.serve(async (request) => {
     const { data: notice, error } = await db.from('notifications').select('*').eq('id', payload.record?.id).single();
     if (error) throw error;
     const { data: recipient, error: recipientError } = await db.from('profiles')
-      .select('approval_status').eq('id', notice.recipient_id).single();
+      .select('approval_status, role').eq('id', notice.recipient_id).single();
     if (recipientError) throw recipientError;
-    if (recipient.approval_status !== 'approved') {
+    if (recipient.approval_status !== 'approved' || !['employee','management','hr','admin','super_admin'].includes(recipient.role)) {
       return Response.json({ sent: 0, skipped: 'RECIPIENT_NOT_APPROVED' });
     }
+    if (notice.read_at || notice.dismissed_at) return Response.json({ sent: 0, skipped: 'ALREADY_READ_OR_DISMISSED' });
+    const screen = notice.destination || 'leave';
+    const screens = ['leave','onboarding','payslip','ticket','document','tasks','chat','attendance_adjustments','company_wall'];
+    if (!screens.includes(screen)) return Response.json({ sent: 0, skipped: 'UNKNOWN_DESTINATION' });
+    if (['onboarding','payslip','ticket','document'].includes(screen)) {
+      const { data: record } = await db.from('hr_records').select('module,employee_id,status,company_wide').eq('id', notice.target_id).single();
+      const staff = ['hr','admin','super_admin'].includes(recipient.role);
+      if (!record || record.module !== screen || !(staff ||
+        (record.employee_id === notice.recipient_id && (!['payslip','document'].includes(screen) || record.status === 'published')) ||
+        (record.module === 'document' && record.company_wide && record.status === 'published'))) {
+        return Response.json({ sent: 0, skipped: 'TARGET_NO_LONGER_ACCESSIBLE' });
+      }
+    }
+    if (screen === 'chat') {
+      const { data: participant } = await db.from('conversation_participants').select('user_id').eq('conversation_id', notice.target_id).eq('user_id', notice.recipient_id).single();
+      if (!participant) return Response.json({ sent: 0, skipped: 'TARGET_NO_LONGER_ACCESSIBLE' });
+    }
+    const webUrl = Deno.env.get('HRMS_WEB_URL');
+    let webLink: string | undefined;
+    if (webUrl) { const url = new URL(webUrl); url.searchParams.set('notification_id', notice.id); webLink = url.toString(); }
     stage = 'device_lookup';
     const { data: devices, error: tokenError } = await db.from('push_tokens').select('token').eq('user_id', notice.recipient_id);
     if (tokenError) throw tokenError;
@@ -54,9 +74,9 @@ Deno.serve(async (request) => {
         body: JSON.stringify({ message: {
           token: device.token,
           notification: { title: notice.title, body: notice.body },
-          data: { notification_id: notice.id, screen: 'leave' },
-          ...(Deno.env.get('HRMS_WEB_URL') ? { webpush: { fcm_options: { link: Deno.env.get('HRMS_WEB_URL') } } } : {}),
-          android: { priority: 'high', notification: { tag: notice.id, channel_id: 'leave_requests' } },
+          data: { notification_id: notice.id, screen, ...(notice.target_id ? { target_id: notice.target_id } : {}) },
+          ...(webLink ? { webpush: { fcm_options: { link: webLink } } } : {}),
+          android: { priority: screen === 'leave' || notice.priority === 'high' ? 'high' : 'normal', notification: { tag: screen === 'chat' ? `chat:${notice.target_id}` : notice.id, channel_id: screen === 'leave' ? 'leave_requests' : 'hrms_updates' } },
           apns: { headers: { 'apns-collapse-id': notice.id }, payload: { aps: { sound: 'default' } } },
         } }),
       });

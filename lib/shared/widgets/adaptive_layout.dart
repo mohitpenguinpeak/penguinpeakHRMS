@@ -84,3 +84,49 @@ class WorkspaceReveal extends StatelessWidget {
     child: child,
   );
 }
+
+/// Keeps the existing desktop row, and gives phone content room to wrap.
+class AdaptiveRow extends StatelessWidget {
+  const AdaptiveRow({
+    super.key,
+    required this.children,
+    this.mainAxisAlignment = MainAxisAlignment.start,
+    this.crossAxisAlignment = CrossAxisAlignment.center,
+    this.breakpoint = 600,
+  });
+
+  final List<Widget> children;
+  final MainAxisAlignment mainAxisAlignment;
+  final CrossAxisAlignment crossAxisAlignment;
+  final double breakpoint;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (MediaQuery.sizeOf(context).width >= 850 ||
+          constraints.maxWidth >= breakpoint) {
+        return Row(
+          mainAxisAlignment: mainAxisAlignment,
+          crossAxisAlignment: crossAxisAlignment,
+          children: children,
+        );
+      }
+      final items = children
+          .where(
+            (child) =>
+                child is! Spacer && !(child is SizedBox && child.child == null),
+          )
+          .toList();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            items[i] is Flexible ? (items[i] as Flexible).child : items[i],
+          ],
+        ],
+      );
+    },
+  );
+}

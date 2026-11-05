@@ -1,8 +1,10 @@
-# First-time setup: leave notifications on phones and computers
+# Notification transport setup
 
-A leave application produces one saved notification per recipient: every approved
-HR user, plus the employee's approved reporting manager. If the same person is
-both HR and manager, they get one saved notification. Nothing is emailed.
+Current event routing is described in [Workspace notifications](workspace-notifications.md),
+including onboarding, payslips, helpdesk, documents, tasks, chat, attendance and
+announcements. Leave notifications follow the staged manager → HR workflow.
+This guide covers the shared transport and permissions; follow the current
+release migration guides as well as the initial transport setup. Nothing is emailed.
 
 ## 1. Understand the two parts
 

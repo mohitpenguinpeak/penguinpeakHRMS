@@ -1,4 +1,35 @@
-# PenguinPeak implementation record — 3 November 2026
+# PenguinPeak implementation record — 4 November 2026
+
+## Workspace notification logic
+
+Added server-generated alerts for the retained HR services and important existing
+workflow events. Generic lock-screen summaries protect salary, document, ticket
+and chat content. Inbox, push and local alert taps now route to the actual module;
+HR records, tasks and conversations can open their specific saved item. Existing
+leave notices and channels remain supported. See [event routing and activation](workspace-notifications.md).
+
+Migration `202611040003_workspace_notifications.sql` and the updated existing
+`send-leave-push` function are prepared locally, not deployed. Isolated checks:
+35 SQL event/recipient checks and 17 mocked push-handler checks passed. The full
+Flutter suite passed 94 tests. No live employee notification was sent.
+
+## Selected HR services
+
+The user narrowed the new feature scope to onboarding, payslips/salary, HR
+helpdesk and Document Centre. Removed expenses, shifts/swaps, performance,
+assets, offboarding and reporting UI/code, plus the reporting-only PDF dependency.
+Existing original modules and earlier mobile fixes are preserved.
+
+The original HR migration remains deployment history. Follow-up migration
+`202611040002_limit_hr_modules.sql` disables retired workflows and file access
+without deleting existing records. Neither migration has been applied to a live
+database by this session. See [HR modules release](hr-modules-release.md) for
+fresh-install versus upgrade instructions. Isolated SQL validation passed 52
+workflow/security checks, including retired record preservation and access denial.
+The full Flutter suite passed 88 tests; analyzer found no errors or warnings
+(108 pre-existing informational findings). The reduced Android release build
+succeeded. Live account/Storage and physical-device acceptance remain unverified.
+Earlier architecture/security limitations below still apply to existing modules.
 
 ## Organization chart layout correction
 

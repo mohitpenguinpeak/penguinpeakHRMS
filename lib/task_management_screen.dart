@@ -31,7 +31,14 @@ class TaskTracker {
 
 class TaskManagementScreen extends StatefulWidget {
   final String role;
-  const TaskManagementScreen({super.key, required this.role});
+  const TaskManagementScreen({
+    super.key,
+    required this.role,
+    this.initialTaskId,
+    this.onTargetConsumed,
+  });
+  final String? initialTaskId;
+  final VoidCallback? onTargetConsumed;
 
   @override
   State<TaskManagementScreen> createState() => _TaskManagementScreenState();
@@ -43,6 +50,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
   late TabController _tabController;
 
   bool _loading = true;
+  bool _initialTaskOpened = false;
   String? _error;
   List<Map<String, dynamic>> _tasks = [];
   List<Map<String, dynamic>> _profiles = [];
@@ -110,6 +118,25 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
 
       if (!mounted) return;
       setState(() => _loading = false);
+      if (!_initialTaskOpened && widget.initialTaskId != null) {
+        _initialTaskOpened = true;
+        widget.onTargetConsumed?.call();
+        final task = _tasks
+            .where((t) => t['id'] == widget.initialTaskId)
+            .firstOrNull;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (task != null) {
+            _viewTaskDetails(task);
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('This task is no longer available.'),
+              ),
+            );
+          }
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {

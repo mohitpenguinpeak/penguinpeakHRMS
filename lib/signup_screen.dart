@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'login_screen.dart';
+import 'shared/widgets/adaptive_layout.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -176,6 +177,10 @@ class _SignupScreenState extends State<SignupScreen>
 
   @override
   Widget build(BuildContext context) {
+    final compact =
+        MediaQuery.sizeOf(context).width < 600 ||
+        MediaQuery.viewInsetsOf(context).bottom > 0;
+    Widget formArea(Widget child) => compact ? Expanded(child: child) : child;
     return Scaffold(
       backgroundColor: background,
       body: Stack(
@@ -222,19 +227,23 @@ class _SignupScreenState extends State<SignupScreen>
                         },
                       ),
                       const Spacer(),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(context).pushReplacement(
-                            MaterialPageRoute(
-                              builder: (_) => const LoginScreen(),
+                      Flexible(
+                        child: TextButton(
+                          onPressed: () {
+                            Navigator.of(context).pushReplacement(
+                              MaterialPageRoute(
+                                builder: (_) => const LoginScreen(),
+                              ),
+                            );
+                          },
+                          child: Text(
+                            compact
+                                ? 'Sign In'
+                                : 'Already have an account? Sign In',
+                            style: TextStyle(
+                              color: orange,
+                              fontWeight: FontWeight.bold,
                             ),
-                          );
-                        },
-                        child: const Text(
-                          'Already have an account? Sign In',
-                          style: TextStyle(
-                            color: orange,
-                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
@@ -242,60 +251,61 @@ class _SignupScreenState extends State<SignupScreen>
                   ),
                 ),
 
-                const Spacer(),
-
+                if (!compact) const Spacer(),
                 // Center Conversational Content Area
-                Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 580),
-                      child: Form(
-                        key: _formKey,
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 380),
-                          switchInCurve: Curves.easeOutCubic,
-                          switchOutCurve: Curves.easeInCubic,
-                          transitionBuilder: (child, animation) {
-                            return FadeTransition(
-                              opacity: animation,
-                              child: SlideTransition(
-                                position: Tween<Offset>(
-                                  begin: const Offset(0, 0.08),
-                                  end: Offset.zero,
-                                ).animate(animation),
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: KeyedSubtree(
-                            key: ValueKey<int>(_currentStep),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Full Body Mascot "Peakie"
-                                PenguinMascot(state: _getMascotState()),
+                formArea(
+                  Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 580),
+                        child: Form(
+                          key: _formKey,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 380),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            transitionBuilder: (child, animation) {
+                              return FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: Tween<Offset>(
+                                    begin: const Offset(0, 0.08),
+                                    end: Offset.zero,
+                                  ).animate(animation),
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: KeyedSubtree(
+                              key: ValueKey<int>(_currentStep),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Full Body Mascot "Peakie"
+                                  PenguinMascot(state: _getMascotState()),
 
-                                const SizedBox(height: 24),
+                                  const SizedBox(height: 24),
 
-                                // Dynamic Conversational Card
-                                _buildStepContent(),
+                                  // Dynamic Conversational Card
+                                  _buildStepContent(),
 
-                                if (_errorMessage != null) ...[
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    _errorMessage!,
-                                    style: const TextStyle(
-                                      color: Colors.redAccent,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
+                                  if (_errorMessage != null) ...[
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      _errorMessage!,
+                                      style: const TextStyle(
+                                        color: Colors.redAccent,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
                           ),
                         ),
@@ -304,15 +314,15 @@ class _SignupScreenState extends State<SignupScreen>
                   ),
                 ),
 
-                const Spacer(),
-
+                if (!compact) const Spacer(),
                 // Bottom Navigation Controls
                 Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 24,
                     vertical: 16,
                   ),
-                  child: Row(
+                  child: AdaptiveRow(
+                    breakpoint: compact ? 600 : 0,
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       if (_currentStep > 0 && _currentStep < 5)

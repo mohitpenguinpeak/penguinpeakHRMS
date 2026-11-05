@@ -8,20 +8,26 @@ import 'push_notification_service.dart';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'leave_management_screen.dart';
+import 'features/notifications/domain/notification_destination.dart';
 import 'desktop_notification_service.dart';
 
 /// A persistent inbox refreshed while the dashboard is open.
 class NotificationBell extends StatefulWidget {
-  const NotificationBell({super.key, required this.role});
+  const NotificationBell({
+    super.key,
+    required this.role,
+    required this.onNavigate,
+  });
 
   final String role;
+  final ValueChanged<NotificationDestination> onNavigate;
 
   @override
   State<NotificationBell> createState() => _NotificationBellState();
 }
 
-class _NotificationBellState extends State<NotificationBell> {
+class _NotificationBellState extends State<NotificationBell>
+    with WidgetsBindingObserver {
   final _db = Supabase.instance.client;
   final _revision = ValueNotifier<int>(0);
   Timer? _timer;
@@ -38,15 +44,24 @@ class _NotificationBellState extends State<NotificationBell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
     _desktopTaps = DesktopNotificationService.instance.taps.listen((id) {
       if (!mounted || id == 'test') return;
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => LeaveManagementScreen(role: widget.role),
-        ),
-      );
+      unawaited(_openNoticeId(id.toString()));
     });
+    final webId = kIsWeb ? Uri.base.queryParameters['notification_id'] : null;
+    if (webId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_openNoticeId(webId));
+      });
+    }
+    final launchId = DesktopNotificationService.instance.takeLaunchPayload();
+    if (launchId != null && launchId != 'test') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_openNoticeId(launchId));
+      });
+    }
     if (PushNotificationService.instance.isReady) {
       _foreground = FirebaseMessaging.onMessage.listen((message) {
         if (!mounted) return;
@@ -57,11 +72,11 @@ class _NotificationBellState extends State<NotificationBell> {
               'id':
                   message.data['notification_id'] ??
                   message.messageId ??
-                  'leave',
-              'title': message.notification?.title ?? 'New leave notification',
+                  'workspace',
+              'destination': message.data['screen'],
+              'title': message.notification?.title ?? 'New HRMS notification',
               'body':
-                  message.notification?.body ??
-                  'Open HRMS to review the request.',
+                  message.notification?.body ?? 'Open HRMS to view the update.',
             }),
           );
         }
@@ -81,22 +96,66 @@ class _NotificationBellState extends State<NotificationBell> {
   }
 
   void _openPush(RemoteMessage message) {
-    if (!mounted || message.data['screen'] != 'leave') return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => LeaveManagementScreen(role: widget.role),
-      ),
-    );
+    if (!mounted) return;
+    final id = message.data['notification_id'];
+    // Fetch the recipient-owned inbox row, rather than trusting push routing data.
+    if (id != null) unawaited(_openNoticeId(id.toString()));
+  }
+
+  Future<void> _openNoticeId(String id) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null || !mounted) return;
+    try {
+      final item = await _db
+          .from('notifications')
+          .select()
+          .eq('id', id)
+          .eq('recipient_id', uid)
+          .maybeSingle();
+      if (!mounted || _db.auth.currentUser?.id != uid || item == null) return;
+      await _activate(item);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not open notification. Please retry from the inbox.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _activate(Map<String, dynamic> item) async {
+    final target = NotificationDestination.fromMap(item);
+    if (target == null) return;
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null || item['recipient_id'] != uid) return;
+    await _db
+        .from('notifications')
+        .update({'read_at': DateTime.now().toUtc().toIso8601String()})
+        .eq('id', item['id'])
+        .eq('recipient_id', uid);
+    if (!mounted || _db.auth.currentUser?.id != uid) return;
+    widget.onNavigate(target);
+    unawaited(_load());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _desktopTaps?.cancel();
     _foreground?.cancel();
     _opened?.cancel();
     _revision.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_load());
   }
 
   Future<void> _load() async {
@@ -112,7 +171,9 @@ class _NotificationBellState extends State<NotificationBell> {
           .isFilter('dismissed_at', null)
           .order('created_at', ascending: false);
       if (!mounted) return;
-      if (generation != _loadGeneration) return;
+      if (generation != _loadGeneration || _db.auth.currentUser?.id != uid) {
+        return;
+      }
       final notices = List<Map<String, dynamic>>.from(rows);
       final knownIds = _knownIds;
       _knownIds = notices.map((row) => row['id'].toString()).toSet();
@@ -284,26 +345,11 @@ class _NotificationBellState extends State<NotificationBell> {
                             subtitle: Text(item['body'] as String),
                             onTap: () async {
                               try {
-                                await _db
-                                    .from('notifications')
-                                    .update({
-                                      'read_at': DateTime.now()
-                                          .toUtc()
-                                          .toIso8601String(),
-                                    })
-                                    .eq('id', item['id']);
                                 if (!mounted || !sheetContext.mounted) return;
                                 Navigator.pop(sheetContext);
-                                unawaited(_load());
-                                await Navigator.of(this.context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => LeaveManagementScreen(
-                                      role: widget.role,
-                                    ),
-                                  ),
-                                );
+                                await _activate(item);
                               } catch (_) {
-                                if (!mounted || !sheetContext.mounted) return;
+                                if (!mounted) return;
                                 ScaffoldMessenger.of(this.context).showSnackBar(
                                   const SnackBar(
                                     content: Text(

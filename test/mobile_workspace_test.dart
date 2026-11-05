@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguinpeak_hrms/app_theme.dart';
+import 'package:penguinpeak_hrms/login_screen.dart';
+import 'package:penguinpeak_hrms/signup_screen.dart';
 import 'package:penguinpeak_hrms/role_dashboard_screen.dart';
 import 'package:penguinpeak_hrms/features/leave/presentation/leave_balance_summary.dart';
 import 'package:penguinpeak_hrms/features/tasks/presentation/task_calendar_view.dart';
@@ -121,6 +123,55 @@ void main() {
     expect(tester.getSize(find.byKey(const ValueKey(0))).width, 288);
     expect(tester.takeException(), isNull);
   });
+  for (final width in [320.0, 390.0, 1600.0]) {
+    testWidgets('dashboard actions adapt at $width', (tester) async {
+      await host(
+        tester,
+        const SizedBox(
+          width: 700,
+          child: AdaptiveRow(
+            children: [
+              Text("Today's Attendance & Time Tracker"),
+              Spacer(),
+              Text('Not Checked In'),
+            ],
+          ),
+        ),
+        width,
+      );
+      expect(tester.takeException(), isNull);
+      final heading = tester.getRect(
+        find.text("Today's Attendance & Time Tracker"),
+      );
+      final status = tester.getRect(find.text('Not Checked In'));
+      if (width < 600) {
+        expect(status.top, greaterThan(heading.bottom));
+      } else {
+        expect(status.top, heading.top);
+      }
+    });
+    testWidgets('authentication fits $width', (tester) async {
+      tester.view.physicalSize = Size(width, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(theme: AppThemes.dark, home: const LoginScreen()),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(
+        MaterialApp(theme: AppThemes.dark, home: const SignupScreen()),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // The form remains scrollable when the keyboard reduces available height.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
   testWidgets('entry animation respects reduced motion', (tester) async {
     await host(
       tester,

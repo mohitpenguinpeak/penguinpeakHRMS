@@ -113,3 +113,17 @@ policies and a 50-approved-seat cap. Apply only migration 008 after 004–007, o
 use the new stability bundle for the last exported pre-004 schema; never replay
 multiple bundles. Windows helper is prepared but cannot be target-tested without
 a Windows machine. iOS/macOS work is deferred per the user's priority.
+
+## HR services
+
+Onboarding, payslips/salary, HR helpdesk and Document Centre are available in the
+workspace. The other newly added HR modules and reports have been removed.
+See [HR modules release and setup](docs/hr-modules-release.md) for the migration
+sequence, retained workflows and Android build command.
+
+## Workspace notifications
+
+The bell now covers important retained HR events, task updates, chat, attendance
+reviews and official announcements. See [notification activation and event routing](docs/workspace-notifications.md)
+for the new migration and the existing push-function update. No live migration or
+remote notification send is performed by building the app.

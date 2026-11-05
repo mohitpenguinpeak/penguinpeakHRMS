@@ -20,7 +20,7 @@ let removed;
 let logs;
 const env = new Map();
 const context = vm.createContext({
-  Response,
+  Response, URL,
   console: { info: (...args) => logs.push(args), error: (...args) => logs.push(args) },
   Deno: { env: { get: key => env.get(key) }, serve: fn => { handler = fn; } },
   GoogleAuth: class { async getAccessToken() { return 'synthetic-access'; } },
@@ -36,8 +36,10 @@ const context = vm.createContext({
         return this;
       },
       async single() {
-        if (table === 'profiles') return { data: { approval_status: config.approval }, error: null };
-        return { data: { id: 'notice', recipient_id: 'recipient', title: 'Leave', body: 'Review leave' }, error: null };
+        if (table === 'profiles') return { data: { approval_status: config.approval, role: config.role || 'employee' }, error: null };
+        if (table === 'hr_records') return { data: config.record, error: null };
+        if (table === 'conversation_participants') return { data: config.member ? { user_id: 'recipient' } : null, error: null };
+        return { data: { id: 'notice', recipient_id: 'recipient', title: 'Update', body: 'Open HRMS', ...config.notice }, error: null };
       },
     };
   } }),
@@ -80,4 +82,22 @@ assert.ok(JSON.stringify(logs).includes('SENDER_ID_MISMATCH'));
 assert.ok(!JSON.stringify(logs).includes('synthetic-device-token')); count++;
 reset(); env.set('FCM_SERVICE_ACCOUNT_JSON', 'invalid-json');
 assert.equal((await (await call()).json()).stage, 'firebase_credentials'); count++;
+reset(); config.notice = {destination:'payslip',target_id:'record'}; config.record={module:'payslip',employee_id:'recipient',status:'published'};
+assert.equal((await (await call()).json()).sent,1);
+assert.equal(fetches[0].message.data.screen,'payslip');
+assert.equal(fetches[0].message.data.target_id,'record');
+assert.equal(fetches[0].message.android.notification.channel_id,'hrms_updates'); count++;
+reset(); config.notice={destination:'payslip',target_id:'record'}; config.record={module:'payslip',employee_id:'someone-else',status:'published'};
+assert.equal((await (await call()).json()).skipped,'TARGET_NO_LONGER_ACCESSIBLE'); assert.equal(fetches.length,0); count++;
+reset(); config.notice={destination:'document',target_id:'record'}; config.record={module:'document',employee_id:'recipient',status:'draft',company_wide:true};
+assert.equal((await (await call()).json()).skipped,'TARGET_NO_LONGER_ACCESSIBLE'); count++;
+reset(); config.notice={destination:'chat',target_id:'conversation'}; config.member=false;
+assert.equal((await (await call()).json()).skipped,'TARGET_NO_LONGER_ACCESSIBLE'); count++;
+reset(); config.notice={destination:'chat',target_id:'conversation'}; config.member=true;
+assert.equal((await (await call()).json()).sent,1); assert.equal(fetches[0].message.android.notification.tag,'chat:conversation'); count++;
+reset(); config.notice={read_at:'2026-11-04'};
+assert.equal((await (await call()).json()).skipped,'ALREADY_READ_OR_DISMISSED'); assert.equal(fetches.length,0); count++;
+reset(); env.set('HRMS_WEB_URL','https://hrms.example/app?theme=dark');
+await call(); const link=new URL(fetches[0].message.webpush.fcm_options.link);
+assert.equal(link.searchParams.get('notification_id'),'notice'); assert.equal(link.searchParams.get('theme'),'dark'); count++;
 console.log(`${count} push handler checks passed with mocked network and credentials.`);

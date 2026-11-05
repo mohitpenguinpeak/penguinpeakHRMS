@@ -14,6 +14,12 @@ class DesktopNotificationService {
   Stream<String> get taps => _taps.stream;
   bool _ready = false;
   int _nextId = 0;
+  String? _launchPayload;
+  String? takeLaunchPayload() {
+    final value = _launchPayload;
+    _launchPayload = null;
+    return value;
+  }
 
   bool get supported =>
       kIsWeb ||
@@ -37,7 +43,7 @@ class DesktopNotificationService {
                 requestSoundPermission: false,
               ),
               linux: LinuxInitializationSettings(
-                defaultActionName: 'Open leave requests',
+                defaultActionName: 'Open HRMS',
               ),
               windows: WindowsInitializationSettings(
                 appName: 'PenguinPeak HRMS',
@@ -63,6 +69,22 @@ class DesktopNotificationService {
                 importance: Importance.high,
               ),
             );
+        await _plugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >()
+            ?.createNotificationChannel(
+              const AndroidNotificationChannel(
+                'hrms_updates',
+                'HRMS updates',
+                description: 'HR services, tasks, chat and attendance updates',
+                importance: Importance.high,
+              ),
+            );
+      }
+      final launch = await _plugin.getNotificationAppLaunchDetails();
+      if (launch?.didNotificationLaunchApp == true) {
+        _launchPayload = launch?.notificationResponse?.payload;
       }
     } catch (error) {
       debugPrint('Desktop notification setup failed: $error');
@@ -113,6 +135,8 @@ class DesktopNotificationService {
         notice['title'] as String,
         notice['body'] as String,
         notice['id'].toString(),
+        workspace:
+            notice['destination'] != null && notice['destination'] != 'leave',
       );
     } catch (error) {
       // An OS permission or notification-server failure must not break the inbox.
@@ -120,16 +144,23 @@ class DesktopNotificationService {
     }
   }
 
-  Future<void> _show(String title, String body, String payload) => _plugin.show(
+  Future<void> _show(
+    String title,
+    String body,
+    String payload, {
+    bool workspace = false,
+  }) => _plugin.show(
     id: _nextId++ % 2147483647,
     title: title,
     body: body,
     payload: payload,
-    notificationDetails: const NotificationDetails(
+    notificationDetails: NotificationDetails(
       android: AndroidNotificationDetails(
-        'leave_requests',
-        'Leave requests',
-        channelDescription: 'New employee leave applications',
+        workspace ? 'hrms_updates' : 'leave_requests',
+        workspace ? 'HRMS updates' : 'Leave requests',
+        channelDescription: workspace
+            ? 'HR services, tasks, chat and attendance updates'
+            : 'New employee leave applications',
         importance: Importance.high,
         priority: Priority.high,
       ),
