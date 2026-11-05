@@ -416,8 +416,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
           .eq('attendance_date', todayStr)
           .maybeSingle();
 
-      if (existing == null) {
-        // Clock In
+      if (existing == null || existing['check_out'] != null) {
+        // Clock In / Check In Again
         final now = DateTime.now();
         final startTime = DateTime(now.year, now.month, now.day, 9, 0);
         int lateMins = 0;
@@ -426,18 +426,33 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         }
         String status = lateMins > 15 ? 'Late' : 'Present';
 
-        final newRec = await _supabase
-            .from('attendance_records')
-            .insert({
-              'employee_id': user.id,
-              'attendance_date': todayStr,
-              'check_in': nowTime,
-              'status': status,
-              'late_minutes': lateMins,
-            })
-            .select()
-            .single();
-        setState(() => _myTodayAttendance = newRec);
+        if (existing != null) {
+          final updated = await _supabase
+              .from('attendance_records')
+              .update({
+                'check_out': null,
+                'check_in': nowTime,
+                'status': status,
+              })
+              .eq('id', existing['id'])
+              .select()
+              .single();
+          setState(() => _myTodayAttendance = updated);
+        } else {
+          final newRec = await _supabase
+              .from('attendance_records')
+              .insert({
+                'employee_id': user.id,
+                'attendance_date': todayStr,
+                'check_in': nowTime,
+                'status': status,
+                'late_minutes': lateMins,
+              })
+              .select()
+              .single();
+          setState(() => _myTodayAttendance = newRec);
+        }
+
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -445,7 +460,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             backgroundColor: Colors.green,
           ),
         );
-      } else if (existing['check_out'] == null) {
+      } else if (existing['check_in'] != null &&
+          existing['check_out'] == null) {
         // Clock Out
         final updated = await _supabase
             .from('attendance_records')
@@ -461,13 +477,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             backgroundColor: Colors.orange,
           ),
         );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Attendance already completed for today.'),
-          ),
-        );
       }
+      await _loadDataSilently();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
