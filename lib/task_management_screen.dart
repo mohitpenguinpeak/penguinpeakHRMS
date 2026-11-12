@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/theme/design_system.dart';
 import 'features/leave/domain/leave_request.dart';
 import 'features/tasks/domain/task_query.dart';
 import 'features/tasks/presentation/task_overview_panel.dart';
@@ -17,6 +20,56 @@ class TaskTracker {
   final ValueNotifier<Map<String, dynamic>?> activeTask =
       ValueNotifier<Map<String, dynamic>?>(null);
   Map<String, dynamic>? preBreakTask;
+
+  // Live Timer & Timelogs
+  final ValueNotifier<int> activeSeconds = ValueNotifier<int>(0);
+  final ValueNotifier<bool> isTimerRunning = ValueNotifier<bool>(false);
+  Timer? _liveTimer;
+
+  final ValueNotifier<List<Map<String, dynamic>>> timelogs =
+      ValueNotifier<List<Map<String, dynamic>>>([]);
+
+  void startTimer(Map<String, dynamic> task) {
+    if (activeTask.value?['id'] != task['id']) {
+      activeTask.value = task;
+      activeSeconds.value = 0;
+    }
+    isTimerRunning.value = true;
+    _liveTimer?.cancel();
+    _liveTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      activeSeconds.value++;
+    });
+  }
+
+  void pauseTimer() {
+    isTimerRunning.value = false;
+    _liveTimer?.cancel();
+  }
+
+  void stopAndLogTimer(String note) {
+    pauseTimer();
+    final secs = activeSeconds.value;
+    if (secs > 0 && activeTask.value != null) {
+      final hours = secs ~/ 3600;
+      final mins = (secs % 3600) ~/ 60;
+      addTimelog({
+        'id': DateTime.now().millisecondsSinceEpoch.toString(),
+        'task_id': activeTask.value!['id'],
+        'task_title': activeTask.value!['title'] ?? 'Task',
+        'logged_seconds': secs,
+        'logged_hours_fmt':
+            '${hours.toString().padLeft(2, '0')}:${mins.toString().padLeft(2, '0')}',
+        'note': note,
+        'date': DateTime.now().toIso8601String().split('T')[0],
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      activeSeconds.value = 0;
+    }
+  }
+
+  void addTimelog(Map<String, dynamic> log) {
+    timelogs.value = [log, ...timelogs.value];
+  }
 
   void saveTaskBeforeBreak(Map<String, dynamic>? task) {
     preBreakTask = task;
@@ -70,7 +123,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -1391,10 +1444,11 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
             Tab(text: 'Assigned by Me'),
             Tab(text: 'All-Hands Board'),
             Tab(text: 'Resource Availability Matrix'),
+            Tab(text: '⏱️ Timelog & Live Timer'),
           ],
         ),
         const SizedBox(height: 16),
-        if (_tabController.index != 3) ...[
+        if (_tabController.index < 3) ...[
           Text(
             '${_filteredTasks(_tabController.index == 0
                 ? 'my'
@@ -1439,6 +1493,8 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
             ? const Center(child: CircularProgressIndicator())
             : _error != null
             ? Center(child: Text('Error: $_error'))
+            : _tabController.index == 4
+            ? _buildTimelogTabView()
             : _tabController.index == 3
             ? _buildResourceAvailabilityMatrix()
             : _buildTaskView(
@@ -1705,6 +1761,453 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildTimelogTabView() {
+    return ValueListenableBuilder<List<Map<String, dynamic>>>(
+      valueListenable: TaskTracker.instance.timelogs,
+      builder: (context, logs, child) {
+        int totalSeconds = logs.fold<int>(
+          0,
+          (sum, log) => sum + ((log['logged_seconds'] as num?)?.toInt() ?? 0),
+        );
+        final totalHours = totalSeconds ~/ 3600;
+        final totalMins = (totalSeconds % 3600) ~/ 60;
+        final loggedHoursStr =
+            '${totalHours.toString().padLeft(2, '0')}:${totalMins.toString().padLeft(2, '0')}';
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Top Summary KPI Cards Header (OrangeScrum Style)
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 800;
+                return GridView.count(
+                  crossAxisCount: isWide ? 4 : 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  childAspectRatio: isWide ? 2.0 : 1.5,
+                  children: [
+                    MetricCard(
+                      title: 'Estimated Hours',
+                      value: '82:00',
+                      icon: Icons.timer_outlined,
+                      accentColor: Colors.amber,
+                    ),
+                    MetricCard(
+                      title: 'Logged Hours',
+                      value: loggedHoursStr,
+                      icon: Icons.check_circle_outline,
+                      accentColor: Colors.green,
+                    ),
+                    MetricCard(
+                      title: 'Billable Hours',
+                      value: '0:00',
+                      icon: Icons.attach_money,
+                      accentColor: Colors.blue,
+                    ),
+                    MetricCard(
+                      title: 'Non-Billable Hours',
+                      value: loggedHoursStr,
+                      icon: Icons.work_outline,
+                      accentColor: Colors.purple,
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 20),
+            // Live Digital Timer Card
+            GlassCard(
+              padding: const EdgeInsets.all(20),
+              child: ValueListenableBuilder<int>(
+                valueListenable: TaskTracker.instance.activeSeconds,
+                builder: (context, secs, child) {
+                  final h = (secs ~/ 3600).toString().padLeft(2, '0');
+                  final m = ((secs % 3600) ~/ 60).toString().padLeft(2, '0');
+                  final s = (secs % 60).toString().padLeft(2, '0');
+                  final clockStr = '$h:$m:$s';
+                  final activeTask = TaskTracker.instance.activeTask.value;
+                  final isRunning = TaskTracker.instance.isTimerRunning.value;
+
+                  return Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Live Task Timer',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Text(
+                                activeTask != null
+                                    ? 'Tracking: ${activeTask['title']}'
+                                    : 'No active task selected for timing',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                          StatusBadge(
+                            label: isRunning ? 'TIMING ACTIVE ⏱️' : 'PAUSED',
+                            color: isRunning ? Colors.green : Colors.grey,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        clockStr,
+                        style: const TextStyle(
+                          fontSize: 42,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2,
+                          color: Color(0xFF6366F1),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        children: [
+                          if (isRunning) ...[
+                            OutlinedButton.icon(
+                              onPressed: () {
+                                TaskTracker.instance.pauseTimer();
+                                setState(() {});
+                              },
+                              icon: const Icon(Icons.pause),
+                              label: const Text('Pause Timer'),
+                            ),
+                            FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Colors.orange,
+                              ),
+                              onPressed: () {
+                                TaskTracker.instance.stopAndLogTimer(
+                                  'Live task timer logged.',
+                                );
+                                setState(() {});
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('⏱️ Time logged!'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.stop),
+                              label: const Text('Stop & Save Log'),
+                            ),
+                          ] else
+                            FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Colors.green,
+                              ),
+                              onPressed: () {
+                                if (_tasks.isNotEmpty) {
+                                  TaskTracker.instance.startTimer(
+                                    activeTask ?? _tasks.first,
+                                  );
+                                  setState(() {});
+                                }
+                              },
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text('Start Timer'),
+                            ),
+                          FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF6366F1),
+                            ),
+                            onPressed: () => _showManualTimeEntryDialog(),
+                            icon: const Icon(Icons.add_task),
+                            label: const Text('Log Time Entry'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 20),
+            // Timelog Entries Table (OrangeScrum Style)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Task Timelogs',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          '${logs.length} timelog entries',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (logs.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: Text(
+                            'No timelogs recorded yet. Click "Log Time Entry" or "Start Timer" on a task.',
+                          ),
+                        ),
+                      )
+                    else
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          columns: const [
+                            DataColumn(
+                              label: Text(
+                                'DATE',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'TASK TITLE',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'LOGGED HOURS',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'NOTE',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            DataColumn(
+                              label: Text(
+                                'ACTIONS',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                          rows: logs.map((log) {
+                            return DataRow(
+                              cells: [
+                                DataCell(
+                                  Text(
+                                    log['date']?.toString() ?? '-',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                                DataCell(
+                                  Text(
+                                    log['task_title']?.toString() ?? '-',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                DataCell(
+                                  StatusBadge(
+                                    label:
+                                        log['logged_hours_fmt']?.toString() ??
+                                        '00:00',
+                                    color: Colors.green,
+                                  ),
+                                ),
+                                DataCell(
+                                  Text(
+                                    log['note']?.toString() ?? '—',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                                DataCell(
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 18,
+                                      color: Colors.red,
+                                    ),
+                                    onPressed: () {
+                                      TaskTracker
+                                          .instance
+                                          .timelogs
+                                          .value = TaskTracker
+                                          .instance
+                                          .timelogs
+                                          .value
+                                          .where((l) => l['id'] != log['id'])
+                                          .toList();
+                                    },
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showManualTimeEntryDialog([Map<String, dynamic>? initialTask]) {
+    Map<String, dynamic>? selectedTask =
+        initialTask ?? (_tasks.isNotEmpty ? _tasks.first : null);
+    final hoursController = TextEditingController(text: '1');
+    final minsController = TextEditingController(text: '0');
+    final noteController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Log Time Entry for Task'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<Map<String, dynamic>>(
+                    value: selectedTask,
+                    decoration: const InputDecoration(
+                      labelText: 'Select Task *',
+                    ),
+                    items: _tasks
+                        .map(
+                          (t) => DropdownMenuItem(
+                            value: t,
+                            child: Text(t['title'] ?? 'Task'),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => selectedTask = v),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: hoursController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Hours'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: minsController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Minutes',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Work Note / Description',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (selectedTask == null) return;
+                final h = int.tryParse(hoursController.text.trim()) ?? 0;
+                final m = int.tryParse(minsController.text.trim()) ?? 0;
+                final totalSecs = (h * 3600) + (m * 60);
+
+                if (totalSecs <= 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please enter valid hours or minutes.'),
+                    ),
+                  );
+                  return;
+                }
+
+                TaskTracker.instance.addTimelog({
+                  'id': DateTime.now().millisecondsSinceEpoch.toString(),
+                  'task_id': selectedTask!['id'],
+                  'task_title': selectedTask!['title'] ?? 'Task',
+                  'logged_seconds': totalSecs,
+                  'logged_hours_fmt':
+                      '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}',
+                  'note': noteController.text.trim(),
+                  'date': DateTime.now().toIso8601String().split('T')[0],
+                  'created_at': DateTime.now().toIso8601String(),
+                });
+
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ Time logged successfully!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                setState(() {});
+              },
+              child: const Text('Save Timelog'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
