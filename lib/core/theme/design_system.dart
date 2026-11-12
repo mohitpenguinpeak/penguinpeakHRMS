@@ -3,43 +3,43 @@ import 'package:flutter/material.dart';
 class AppColors {
   static Color background(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF090A0F) // Deep graphite charcoal
-          : const Color(0xFFF4F5F7); // Pristine light SaaS workspace background
+      ? const Color(0xFF090A0F) // Deep graphite charcoal
+      : const Color(0xFFF4F5F7); // Pristine light SaaS workspace background
 
   static Color surface(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF13151A)
-          : Colors.white;
+      ? const Color(0xFF13151A)
+      : Colors.white;
 
   static Color surfaceElevated(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF1A1D24)
-          : const Color(0xFFFFFFFF);
+      ? const Color(0xFF1A1D24)
+      : const Color(0xFFFFFFFF);
 
   static Color surfaceMuted(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF1E222B)
-          : const Color(0xFFEDF2F7);
+      ? const Color(0xFF1E222B)
+      : const Color(0xFFEDF2F7);
 
   static Color textPrimary(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFFF1F3F5)
-          : const Color(0xFF0F172A);
+      ? const Color(0xFFF1F3F5)
+      : const Color(0xFF0F172A);
 
   static Color textSecondary(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF9CA3AF)
-          : const Color(0xFF475569);
+      ? const Color(0xFF9CA3AF)
+      : const Color(0xFF475569);
 
   static Color textTertiary(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF6B7280)
-          : const Color(0xFF94A3B8);
+      ? const Color(0xFF6B7280)
+      : const Color(0xFF94A3B8);
 
   static Color border(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF262B35)
-          : const Color(0xFFE2E8F0);
+      ? const Color(0xFF262B35)
+      : const Color(0xFFE2E8F0);
 
   // Professional SaaS Accent: Electric Indigo / Slate Violet
   static const Color accent = Color(0xFF6366F1); // Indigo
@@ -71,24 +71,24 @@ class AppRadius {
 
 class AppShadows {
   static List<BoxShadow> subtle(BuildContext context) => [
-        BoxShadow(
-          color: Theme.of(context).brightness == Brightness.dark
-              ? Colors.black.withValues(alpha: 0.25)
-              : Colors.black.withValues(alpha: 0.04),
-          blurRadius: 12,
-          offset: const Offset(0, 2),
-        ),
-      ];
+    BoxShadow(
+      color: Theme.of(context).brightness == Brightness.dark
+          ? Colors.black.withValues(alpha: 0.25)
+          : Colors.black.withValues(alpha: 0.04),
+      blurRadius: 12,
+      offset: const Offset(0, 2),
+    ),
+  ];
 
   static List<BoxShadow> elevated(BuildContext context) => [
-        BoxShadow(
-          color: Theme.of(context).brightness == Brightness.dark
-              ? Colors.black.withValues(alpha: 0.4)
-              : Colors.black.withValues(alpha: 0.08),
-          blurRadius: 24,
-          offset: const Offset(0, 8),
-        ),
-      ];
+    BoxShadow(
+      color: Theme.of(context).brightness == Brightness.dark
+          ? Colors.black.withValues(alpha: 0.4)
+          : Colors.black.withValues(alpha: 0.08),
+      blurRadius: 24,
+      offset: const Offset(0, 8),
+    ),
+  ];
 }
 
 class GlassCard extends StatelessWidget {
@@ -116,7 +116,8 @@ class GlassCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color:
-            backgroundColor ?? (isDark ? const Color(0xFF13151A) : Colors.white),
+            backgroundColor ??
+            (isDark ? const Color(0xFF13151A) : Colors.white),
         borderRadius: radius,
         border: Border.all(
           color: isDark ? const Color(0xFF262B35) : const Color(0xFFE2E8F0),
@@ -208,72 +209,81 @@ class MetricCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return GlassCard(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                child: Icon(icon, color: accentColor, size: 20),
-              ),
-              if (trend != null)
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
+                  padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    color: accentColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
-                  child: Text(
-                    trend!,
-                    style: const TextStyle(
-                      color: Colors.green,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
+                  child: Icon(icon, color: accentColor, size: 18),
+                ),
+                if (trend != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Text(
+                      trend!,
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            value,
-            style: theme.textTheme.headlineMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.5,
+              ],
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            title,
-            style: TextStyle(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          if (subtitle != null) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
-              subtitle!,
-              style: TextStyle(
-                color: theme.colorScheme.onSurfaceVariant.withValues(
-                  alpha: 0.7,
-                ),
-                fontSize: 11,
+              value,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                letterSpacing: -0.5,
               ),
             ),
+            const SizedBox(height: 2),
+            Text(
+              title,
+              style: TextStyle(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                subtitle!,
+                style: TextStyle(
+                  color: theme.colorScheme.onSurfaceVariant.withValues(
+                    alpha: 0.7,
+                  ),
+                  fontSize: 11,
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

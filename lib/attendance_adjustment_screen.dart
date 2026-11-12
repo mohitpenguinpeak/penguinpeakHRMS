@@ -456,7 +456,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
               mainAxisSpacing: 12,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: isWide ? 2.8 : 2.0,
+              childAspectRatio: isWide ? 2.0 : 1.5,
               children: [
                 MetricCard(
                   title: 'Pending Review',
