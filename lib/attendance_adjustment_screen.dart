@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-
-import 'shared/widgets/adaptive_layout.dart';
-
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'core/theme/design_system.dart';
+import 'shared/widgets/adaptive_layout.dart';
 
 class AttendanceAdjustmentScreen extends StatefulWidget {
   final String role;
@@ -33,6 +33,11 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
   Timer? _syncTimer;
   List<Map<String, dynamic>> _requests = [];
   List<Map<String, dynamic>> _profiles = [];
+
+  // Filter & Search states
+  String _searchFilter = '';
+  String _statusFilter = 'All';
+  String _typeFilter = 'All';
 
   String? get _uid => _db.auth.currentUser?.id;
   bool get _canReview =>
@@ -110,10 +115,11 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
         final target = _requests
             .where((r) => r['id'] == widget.initialRequestId)
             .firstOrNull;
-        if (_canReview && target != null)
+        if (_canReview && target != null) {
           _tabController.index = target['employee_id'] == _uid ? 0 : 1;
+        }
       }
-      if (widget.initialRequestId != null)
+      if (widget.initialRequestId != null) {
         _requests.sort(
           (a, b) => a['id'] == widget.initialRequestId
               ? -1
@@ -123,6 +129,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                   a['created_at']?.toString() ?? '',
                 ),
         );
+      }
       setState(() => _loading = false);
     } catch (e) {
       if (!mounted) return;
@@ -138,8 +145,9 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
   String _employeeName(dynamic id) {
     final key = id?.toString();
     for (final p in _profiles) {
-      if (p['id']?.toString() == key)
+      if (p['id']?.toString() == key) {
         return (p['full_name'] ?? 'Employee').toString();
+      }
     }
     return 'Employee';
   }
@@ -150,8 +158,9 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
         (s) => Map<String, dynamic>.from(s as Map),
       ),
     );
-    if (sessions.isEmpty)
+    if (sessions.isEmpty) {
       return '${request['requested_check_in'] ?? '—'} → ${request['requested_check_out'] ?? '—'}';
+    }
     return sessions
         .asMap()
         .entries
@@ -175,8 +184,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
         (s) => Map<String, dynamic>.from(s as Map),
       ),
     );
-    if (sessions.isEmpty)
-      return; // Legacy requests are handled in Attendance Management.
+    if (sessions.isEmpty) return;
     final existing = await _db
         .from('attendance_records')
         .select('id, attendance_breaks(*)')
@@ -409,6 +417,22 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isReviewQueue = _canReview && _tabController.index == 1;
+    final currentItems = _requests.where((r) {
+      if (isReviewQueue) return true;
+      return r['employee_id']?.toString() == _uid;
+    }).toList();
+
+    final pendingCount = currentItems
+        .where((r) => r['status'] == 'pending')
+        .length;
+    final approvedCount = currentItems
+        .where((r) => r['status'] == 'approved')
+        .length;
+    final rejectedCount = currentItems
+        .where((r) => r['status'] == 'rejected')
+        .length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -421,6 +445,47 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
           ),
         ),
         const SizedBox(height: 16),
+        // KPI Summary Cards Header
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 800;
+            return GridView.count(
+              crossAxisCount: isWide ? 4 : 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              childAspectRatio: isWide ? 1.8 : 1.5,
+              children: [
+                MetricCard(
+                  title: 'Pending Review',
+                  value: '$pendingCount',
+                  icon: Icons.pending_actions,
+                  accentColor: Colors.orange,
+                ),
+                MetricCard(
+                  title: 'Approved',
+                  value: '$approvedCount',
+                  icon: Icons.check_circle_outline,
+                  accentColor: Colors.green,
+                ),
+                MetricCard(
+                  title: 'Rejected',
+                  value: '$rejectedCount',
+                  icon: Icons.cancel_outlined,
+                  accentColor: Colors.red,
+                ),
+                MetricCard(
+                  title: 'Total Requests',
+                  value: '${currentItems.length}',
+                  icon: Icons.list_alt,
+                  accentColor: const Color(0xFF6366F1),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 16),
         if (_canReview)
           TabBar(
             controller: _tabController,
@@ -430,119 +495,384 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
             ],
           ),
         const SizedBox(height: 16),
+        // Filters & Search Bar Card
+        GlassCard(
+          padding: const EdgeInsets.all(12),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 700;
+              if (isWide) {
+                return Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        decoration: const InputDecoration(
+                          hintText: 'Search by employee or reason...',
+                          prefixIcon: Icon(Icons.search, size: 18),
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onChanged: (v) => setState(() => _searchFilter = v),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: DropdownButtonFormField<String>(
+                        value: _statusFilter,
+                        decoration: const InputDecoration(
+                          labelText: 'Status',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'All',
+                            child: Text('All Statuses'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'pending',
+                            child: Text('Pending'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'approved',
+                            child: Text('Approved'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'rejected',
+                            child: Text('Rejected'),
+                          ),
+                        ],
+                        onChanged: (v) =>
+                            setState(() => _statusFilter = v ?? 'All'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: DropdownButtonFormField<String>(
+                        value: _typeFilter,
+                        decoration: const InputDecoration(
+                          labelText: 'Request Type',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'All',
+                            child: Text('All Types'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'regularisation',
+                            child: Text('Regularisation'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'late_arrival',
+                            child: Text('Late Arrival'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'early_departure',
+                            child: Text('Early Departure'),
+                          ),
+                        ],
+                        onChanged: (v) =>
+                            setState(() => _typeFilter = v ?? 'All'),
+                      ),
+                    ),
+                  ],
+                );
+              } else {
+                return Column(
+                  children: [
+                    TextField(
+                      decoration: const InputDecoration(
+                        hintText: 'Search by employee or reason...',
+                        prefixIcon: Icon(Icons.search, size: 18),
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (v) => setState(() => _searchFilter = v),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: _statusFilter,
+                            decoration: const InputDecoration(
+                              labelText: 'Status',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'All',
+                                child: Text('All Statuses'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'pending',
+                                child: Text('Pending'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'approved',
+                                child: Text('Approved'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'rejected',
+                                child: Text('Rejected'),
+                              ),
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _statusFilter = v ?? 'All'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: _typeFilter,
+                            decoration: const InputDecoration(
+                              labelText: 'Request Type',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'All',
+                                child: Text('All Types'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'regularisation',
+                                child: Text('Regularisation'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'late_arrival',
+                                child: Text('Late Arrival'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'early_departure',
+                                child: Text('Early Departure'),
+                              ),
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _typeFilter = v ?? 'All'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }
+            },
+          ),
+        ),
+        const SizedBox(height: 16),
         _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
             ? Center(child: Text('Error: $_error'))
-            : _canReview
-            ? (_tabController.index == 0
-                  ? _buildList(
-                      _requests
-                          .where((r) => r['employee_id']?.toString() == _uid)
-                          .toList(),
-                      false,
-                    )
-                  : _buildList(_requests, true))
-            : _buildList(
-                _requests
-                    .where((r) => r['employee_id']?.toString() == _uid)
-                    .toList(),
-                false,
-              ),
+            : _buildList(currentItems, isReviewQueue),
       ],
     );
   }
 
   Widget _buildList(List<Map<String, dynamic>> items, bool isReviewQueue) {
-    if (items.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: Text('No attendance adjustment requests found.')),
+    final filtered = items.where((r) {
+      final name = _employeeName(r['employee_id']).toLowerCase();
+      final reason = (r['reason'] ?? '').toString().toLowerCase();
+      final status = (r['status'] ?? 'pending').toString().toLowerCase();
+      final kind = (r['request_kind'] ?? '').toString().toLowerCase();
+
+      final matchesQuery =
+          _searchFilter.isEmpty ||
+          name.contains(_searchFilter.toLowerCase()) ||
+          reason.contains(_searchFilter.toLowerCase());
+
+      final matchesStatus =
+          _statusFilter == 'All' || status == _statusFilter.toLowerCase();
+
+      final matchesType =
+          _typeFilter == 'All' ||
+          kind == _typeFilter.toLowerCase() ||
+          (r['adjustment_type'] ?? '').toString().toLowerCase() ==
+              _typeFilter.toLowerCase();
+
+      return matchesQuery && matchesStatus && matchesType;
+    }).toList();
+
+    if (filtered.isEmpty) {
+      return const EmptyStateWidget(
+        icon: Icons.edit_calendar,
+        title: 'No adjustment requests found',
+        message: 'No attendance requests match the selected filters or search query.',
       );
     }
-    return ListView.builder(
-      itemCount: items.length,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemBuilder: (context, index) {
-        final r = items[index];
-        final isRegularisation = r['request_kind'] == 'regularisation';
-        final type = isRegularisation
-            ? 'Attendance Regularisation • ${r['request_date'] ?? '-'}'
-            : r['adjustment_type'] == 'late_arrival'
-            ? 'Late Arrival'
-            : 'Early Departure';
-        final status = r['status'] ?? 'pending';
-        Color color = Colors.orange;
-        if (status == 'approved') color = Colors.green;
-        if (status == 'rejected') color = Colors.red;
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: color.withOpacity(0.2),
-              child: Icon(
-                r['adjustment_type'] == 'late_arrival'
-                    ? Icons.login
-                    : Icons.logout,
-                color: color,
-              ),
-            ),
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isRegularisation
-                      ? '${_employeeName(r['employee_id'])} - $type'
-                      : '${_employeeName(r['employee_id'])} - $type (${r['duration_minutes']} mins)',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Chip(
-                  label: Text(status.toUpperCase()),
-                  backgroundColor: color.withOpacity(0.2),
-                ),
-              ],
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 4),
-                Text(
-                  isRegularisation
-                      ? 'Requested punches: ${_regularisationSummary(r)}\nReason: ${r['reason']}'
-                      : 'Reason: ${r['reason']}',
-                ),
-                if (r['review_comment'] != null &&
-                    r['review_comment'].toString().isNotEmpty)
-                  Text(
-                    'Reviewer Comment: ${r['review_comment']}',
-                    style: const TextStyle(fontStyle: FontStyle.italic),
-                  ),
-              ],
-            ),
-            trailing:
-                isReviewQueue &&
-                    status == 'pending' &&
-                    (!isRegularisation ||
-                        ['hr', 'admin', 'super_admin'].contains(widget.role))
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossCount = constraints.maxWidth >= 900 ? 2 : 1;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossCount,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: crossCount == 2 ? 2.2 : 1.8,
+          ),
+          itemCount: filtered.length,
+          itemBuilder: (context, index) {
+            final r = filtered[index];
+            final isRegularisation = r['request_kind'] == 'regularisation';
+            final type = isRegularisation
+                ? 'Attendance Regularisation'
+                : r['adjustment_type'] == 'late_arrival'
+                ? 'Late Arrival'
+                : 'Early Departure';
+            final dateStr =
+                r['request_date'] ??
+                r['created_at']?.toString().split('T')[0] ??
+                '-';
+            final status = (r['status'] ?? 'pending').toString();
+            final empName = _employeeName(r['employee_id']);
+
+            Color statusColor = Colors.orange;
+            if (status == 'approved') statusColor = Colors.green;
+            if (status == 'rejected') statusColor = Colors.red;
+
+            return GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.check, color: Colors.green),
-                        onPressed: () => _reviewRequest(r, 'approved'),
-                        tooltip: 'Approve',
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor: statusColor.withValues(alpha: 0.15),
+                        child: Icon(
+                          isRegularisation
+                              ? Icons.edit_calendar
+                              : r['adjustment_type'] == 'late_arrival'
+                              ? Icons.login
+                              : Icons.logout,
+                          color: statusColor,
+                          size: 20,
+                        ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.red),
-                        onPressed: () => _reviewRequest(r, 'rejected'),
-                        tooltip: 'Reject',
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              empName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              '$type • $dateStr',
+                              style: TextStyle(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                                fontSize: 12,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      StatusBadge(
+                        label: status.toUpperCase(),
+                        color: statusColor,
                       ),
                     ],
-                  )
-                : null,
-          ),
+                  ),
+                  const Divider(height: 20),
+                  Text(
+                    isRegularisation
+                        ? 'Punches: ${_regularisationSummary(r)}'
+                        : 'Duration: ${r['duration_minutes']} mins',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Reason: ${r['reason'] ?? 'No reason provided'}',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (r['review_comment'] != null &&
+                      r['review_comment'].toString().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Reviewer Comment: ${r['review_comment']}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.grey,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  const Spacer(),
+                  if (isReviewQueue &&
+                      status == 'pending' &&
+                      (!isRegularisation ||
+                          [
+                            'hr',
+                            'admin',
+                            'super_admin',
+                          ].contains(widget.role))) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                            onPressed: () => _reviewRequest(r, 'approved'),
+                            icon: const Icon(Icons.check, size: 16),
+                            label: const Text(
+                              'Approve',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: const BorderSide(color: Colors.red),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                            onPressed: () => _reviewRequest(r, 'rejected'),
+                            icon: const Icon(Icons.close, size: 16),
+                            label: const Text(
+                              'Reject',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
         );
       },
     );
