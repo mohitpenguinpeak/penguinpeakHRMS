@@ -456,7 +456,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
               mainAxisSpacing: 12,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: isWide ? 1.8 : 1.5,
+              childAspectRatio: isWide ? 2.8 : 2.0,
               children: [
                 MetricCard(
                   title: 'Pending Review',
@@ -754,15 +754,14 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossCount = constraints.maxWidth >= 900 ? 2 : 1;
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossCount,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: crossCount == 2 ? 2.2 : 1.8,
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 440,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            mainAxisExtent: isReviewQueue ? 205 : 165,
           ),
           itemCount: filtered.length,
           itemBuilder: (context, index) {
