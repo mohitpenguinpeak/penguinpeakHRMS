@@ -38,6 +38,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
   String _searchFilter = '';
   String _statusFilter = 'All';
   String _typeFilter = 'All';
+  String _timeframeFilter = 'This Month';
 
   String? get _uid => _db.auth.currentUser?.id;
   bool get _canReview =>
@@ -520,6 +521,35 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                     Expanded(
                       flex: 2,
                       child: DropdownButtonFormField<String>(
+                        value: _timeframeFilter,
+                        decoration: const InputDecoration(
+                          labelText: 'Timeframe',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'This Month',
+                            child: Text('This Month'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Last 30 Days',
+                            child: Text('Last 30 Days'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'All Time / Archive',
+                            child: Text('All Time / Archive'),
+                          ),
+                        ],
+                        onChanged: (v) => setState(
+                          () => _timeframeFilter = v ?? 'This Month',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: DropdownButtonFormField<String>(
                         value: _statusFilter,
                         decoration: const InputDecoration(
                           labelText: 'Status',
@@ -682,6 +712,20 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
       final reason = (r['reason'] ?? '').toString().toLowerCase();
       final status = (r['status'] ?? 'pending').toString().toLowerCase();
       final kind = (r['request_kind'] ?? '').toString().toLowerCase();
+      final dateStr =
+          (r['request_date'] ??
+          r['created_at']?.toString().split('T')[0] ??
+          '');
+      final date = DateTime.tryParse(dateStr);
+      final now = DateTime.now();
+
+      bool matchesTimeframe = true;
+      if (_timeframeFilter == 'This Month') {
+        matchesTimeframe =
+            date != null && date.year == now.year && date.month == now.month;
+      } else if (_timeframeFilter == 'Last 30 Days') {
+        matchesTimeframe = date != null && now.difference(date).inDays <= 30;
+      }
 
       final matchesQuery =
           _searchFilter.isEmpty ||
@@ -697,7 +741,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
           (r['adjustment_type'] ?? '').toString().toLowerCase() ==
               _typeFilter.toLowerCase();
 
-      return matchesQuery && matchesStatus && matchesType;
+      return matchesTimeframe && matchesQuery && matchesStatus && matchesType;
     }).toList();
 
     if (filtered.isEmpty) {
