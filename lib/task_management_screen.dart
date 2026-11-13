@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -117,6 +118,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
   String _dueFilter = 'all', _sort = 'newest', _groupBy = 'none';
   DateTimeRange? _dueRange;
   final _taskSearchController = TextEditingController();
+  final ScrollController _matrixScrollController = ScrollController();
 
   String? get _uid => _db.auth.currentUser?.id;
 
@@ -133,6 +135,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
   @override
   void dispose() {
     _taskSearchController.dispose();
+    _matrixScrollController.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -1826,13 +1829,55 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Displaying ${_formatDateShort(dates.first)} to ${_formatDateShort(dates.last)}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.chevron_left),
+                          tooltip: 'Scroll timeline left',
+                          onPressed: () {
+                            if (_matrixScrollController.hasClients) {
+                              _matrixScrollController.animateTo(
+                                (_matrixScrollController.offset - 280).clamp(
+                                  0.0,
+                                  _matrixScrollController
+                                      .position
+                                      .maxScrollExtent,
+                                ),
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.easeOut,
+                              );
+                            }
+                          },
+                        ),
+                        Text(
+                          'Displaying ${_formatDateShort(dates.first)} to ${_formatDateShort(dates.last)}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right),
+                          tooltip: 'Scroll timeline right',
+                          onPressed: () {
+                            if (_matrixScrollController.hasClients) {
+                              _matrixScrollController.animateTo(
+                                (_matrixScrollController.offset + 280).clamp(
+                                  0.0,
+                                  _matrixScrollController
+                                      .position
+                                      .maxScrollExtent,
+                                ),
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.easeOut,
+                              );
+                            }
+                          },
+                        ),
+                      ],
                     ),
                     Wrap(
                       spacing: 12,
@@ -1846,146 +1891,165 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                   ],
                 ),
                 const Divider(height: 24),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    headingRowHeight: 44,
-                    dataRowMinHeight: 48,
-                    columns: [
-                      const DataColumn(
-                        label: Text(
-                          'Resource Name',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      ...dates.map(
-                        (d) => DataColumn(
-                          label: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                '${d.day}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              Text(
-                                _shortWeekday(d.weekday),
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                    rows: _profiles.map((p) {
-                      final empId = p['id']?.toString() ?? '';
-                      final name = p['full_name']?.toString() ?? 'Employee';
-
-                      double total14DaysAllocated = 0;
-                      for (final d in dates) {
-                        total14DaysAllocated += _getEmployeeAllocatedHours(
-                          empId,
-                          DateTime(d.year, d.month, d.day),
-                        );
-                      }
-                      final totalCapacityMins = dates.length * 8;
-
-                      return DataRow(
-                        cells: [
-                          DataCell(
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  name,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                Text(
-                                  '${total14DaysAllocated.toStringAsFixed(0)}h / ${totalCapacityMins}h',
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
+                ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                      PointerDeviceKind.trackpad,
+                    },
+                  ),
+                  child: Scrollbar(
+                    controller: _matrixScrollController,
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                      controller: _matrixScrollController,
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        headingRowHeight: 44,
+                        dataRowMinHeight: 48,
+                        columns: [
+                          const DataColumn(
+                            label: Text(
+                              'Resource Name',
+                              style: TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ),
-                          ...dates.map((d) {
-                            final dateOnly = DateTime(d.year, d.month, d.day);
-                            final onLeave = _isEmployeeOnLeave(empId, dateOnly);
-                            final allocatedHours = _getEmployeeAllocatedHours(
+                          ...dates.map(
+                            (d) => DataColumn(
+                              label: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    '${d.day}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    _shortWeekday(d.weekday),
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                        rows: _profiles.map((p) {
+                          final empId = p['id']?.toString() ?? '';
+                          final name = p['full_name']?.toString() ?? 'Employee';
+
+                          double total14DaysAllocated = 0;
+                          for (final d in dates) {
+                            total14DaysAllocated += _getEmployeeAllocatedHours(
                               empId,
-                              dateOnly,
+                              DateTime(d.year, d.month, d.day),
                             );
-                            final freeH = (8.0 - allocatedHours).clamp(
-                              0.0,
-                              8.0,
-                            );
+                          }
+                          final totalCapacityMins = dates.length * 8;
 
-                            Color cellColor = Colors.green;
-                            String label = '8h Free';
-                            String tooltipMsg =
-                                'Total: 8h\nBooked: 0h\nAvailable: 8h';
-
-                            if (onLeave) {
-                              cellColor = Colors.grey;
-                              label = 'Leave';
-                              tooltipMsg = 'Status: Vacation / Leave';
-                            } else if (allocatedHours > 8.0) {
-                              cellColor = Colors.purple;
-                              label =
-                                  '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h Over';
-                              tooltipMsg =
-                                  'Overloaded!\nTotal: 8h\nBooked: ${allocatedHours.toStringAsFixed(1)}h\nOverloaded: ${(allocatedHours - 8.0).toStringAsFixed(1)}h';
-                            } else if (allocatedHours == 8.0) {
-                              cellColor = Colors.orange;
-                              label = '8h Full';
-                              tooltipMsg = 'Fully Booked\nTotal: 8h\nBooked: 8h\nAvailable: 0h';
-                            } else if (allocatedHours > 0) {
-                              cellColor = Colors.amber.shade800;
-                              label =
-                                  '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h (${freeH.toStringAsFixed(1).replaceAll('.0', '')}h Free)';
-                              tooltipMsg =
-                                  'Booked: ${allocatedHours.toStringAsFixed(1)}h\nAvailable: ${freeH.toStringAsFixed(1)}h';
-                            }
-
-                            final progress = onLeave
-                                ? 0.0
-                                : (allocatedHours / 8.0).clamp(0.0, 1.0);
-
-                            return DataCell(
-                              Tooltip(
-                                message: tooltipMsg,
-                                child: InkWell(
-                                  onTap: () => _showResourceDetailDialog(
-                                    empId,
-                                    name,
-                                    dateOnly,
-                                    allocatedHours,
-                                  ),
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: _buildResourceCellWidget(
-                                    context,
-                                    label,
-                                    cellColor,
-                                    progress,
-                                  ),
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      name,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${total14DaysAllocated.toStringAsFixed(0)}h / ${totalCapacityMins}h',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            );
-                          }),
-                        ],
-                      );
-                    }).toList(),
+                              ...dates.map((d) {
+                                final dateOnly = DateTime(
+                                  d.year,
+                                  d.month,
+                                  d.day,
+                                );
+                                final onLeave = _isEmployeeOnLeave(
+                                  empId,
+                                  dateOnly,
+                                );
+                                final allocatedHours =
+                                    _getEmployeeAllocatedHours(empId, dateOnly);
+                                final freeH = (8.0 - allocatedHours).clamp(
+                                  0.0,
+                                  8.0,
+                                );
+
+                                Color cellColor = Colors.green;
+                                String label = '8h Free';
+                                String tooltipMsg =
+                                    'Total: 8h\nBooked: 0h\nAvailable: 8h';
+
+                                if (onLeave) {
+                                  cellColor = Colors.grey;
+                                  label = 'Leave';
+                                  tooltipMsg = 'Status: Vacation / Leave';
+                                } else if (allocatedHours > 8.0) {
+                                  cellColor = Colors.purple;
+                                  label =
+                                      '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h Over';
+                                  tooltipMsg =
+                                      'Overloaded!\nTotal: 8h\nBooked: ${allocatedHours.toStringAsFixed(1)}h\nOverloaded: ${(allocatedHours - 8.0).toStringAsFixed(1)}h';
+                                } else if (allocatedHours == 8.0) {
+                                  cellColor = Colors.orange;
+                                  label = '8h Full';
+                                  tooltipMsg = 'Fully Booked\nTotal: 8h\nBooked: 8h\nAvailable: 0h';
+                                } else if (allocatedHours > 0) {
+                                  cellColor = Colors.amber.shade800;
+                                  label =
+                                      '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h (${freeH.toStringAsFixed(1).replaceAll('.0', '')}h Free)';
+                                  tooltipMsg =
+                                      'Booked: ${allocatedHours.toStringAsFixed(1)}h\nAvailable: ${freeH.toStringAsFixed(1)}h';
+                                }
+
+                                final progress = onLeave
+                                    ? 0.0
+                                    : (allocatedHours / 8.0).clamp(0.0, 1.0);
+
+                                return DataCell(
+                                  Tooltip(
+                                    message: tooltipMsg,
+                                    child: InkWell(
+                                      onTap: () => _showResourceDetailDialog(
+                                        empId,
+                                        name,
+                                        dateOnly,
+                                        allocatedHours,
+                                      ),
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: _buildResourceCellWidget(
+                                        context,
+                                        label,
+                                        cellColor,
+                                        progress,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
               ],
