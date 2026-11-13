@@ -1752,135 +1752,282 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     final now = DateTime.now();
     final dates = List.generate(14, (i) => now.add(Duration(days: i)));
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 16,
-              runSpacing: 12,
+    int totalResources = _profiles.length;
+    int availableResources = 0;
+    int busyResources = 0;
+    int overutilizedResources = 0;
+
+    for (final p in _profiles) {
+      final empId = p['id']?.toString() ?? '';
+      final todayHours = _getEmployeeAllocatedHours(
+        empId,
+        DateTime(now.year, now.month, now.day),
+      );
+      if (todayHours > 8.0) {
+        overutilizedResources++;
+        busyResources++;
+      } else if (todayHours >= 6.0) {
+        busyResources++;
+      } else {
+        availableResources++;
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Top Summary KPI Cards Header (OrangeScrum Style)
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 800;
+            return GridView.count(
+              crossAxisCount: isWide ? 4 : 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              childAspectRatio: isWide ? 2.0 : 1.5,
               children: [
-                const Text(
-                  'Team Availability & Hourly Workload Matrix',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                MetricCard(
+                  title: 'Total Resources',
+                  value: '$totalResources',
+                  icon: Icons.groups_outlined,
+                  accentColor: const Color(0xFF6366F1),
                 ),
-                Wrap(
-                  spacing: 12,
+                MetricCard(
+                  title: 'Available Resources',
+                  value: '$availableResources',
+                  icon: Icons.check_circle_outline,
+                  accentColor: Colors.green,
+                ),
+                MetricCard(
+                  title: 'Busy Resources',
+                  value: '$busyResources',
+                  icon: Icons.work_history_outlined,
+                  accentColor: Colors.orange,
+                ),
+                MetricCard(
+                  title: 'Over-Utilized Resources',
+                  value: '$overutilizedResources',
+                  icon: Icons.warning_amber_outlined,
+                  accentColor: Colors.purple,
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 20),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    _legendItem('Available (Free Hours)', Colors.green),
-                    _legendItem('Booked', Colors.orange),
-                    _legendItem('Overloaded (>8h)', Colors.purple),
-                    _legendItem('Vacation / Leave', Colors.grey),
+                    Text(
+                      'Displaying ${_formatDateShort(dates.first)} to ${_formatDateShort(dates.last)}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Wrap(
+                      spacing: 12,
+                      children: [
+                        _legendItem('Available (Free Hours)', Colors.green),
+                        _legendItem('Booked', Colors.orange),
+                        _legendItem('Overloaded (>8h)', Colors.purple),
+                        _legendItem('Vacation / Leave', Colors.grey),
+                      ],
+                    ),
                   ],
+                ),
+                const Divider(height: 24),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    headingRowHeight: 44,
+                    dataRowMinHeight: 48,
+                    columns: [
+                      const DataColumn(
+                        label: Text(
+                          'Resource Name',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      ...dates.map(
+                        (d) => DataColumn(
+                          label: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                '${d.day}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                _shortWeekday(d.weekday),
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                    rows: _profiles.map((p) {
+                      final empId = p['id']?.toString() ?? '';
+                      final name = p['full_name']?.toString() ?? 'Employee';
+
+                      double total14DaysAllocated = 0;
+                      for (final d in dates) {
+                        total14DaysAllocated += _getEmployeeAllocatedHours(
+                          empId,
+                          DateTime(d.year, d.month, d.day),
+                        );
+                      }
+                      final totalCapacityMins = dates.length * 8;
+
+                      return DataRow(
+                        cells: [
+                          DataCell(
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                Text(
+                                  '${total14DaysAllocated.toStringAsFixed(0)}h / ${totalCapacityMins}h',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          ...dates.map((d) {
+                            final dateOnly = DateTime(d.year, d.month, d.day);
+                            final onLeave = _isEmployeeOnLeave(empId, dateOnly);
+                            final allocatedHours = _getEmployeeAllocatedHours(
+                              empId,
+                              dateOnly,
+                            );
+                            final freeH = (8.0 - allocatedHours).clamp(
+                              0.0,
+                              8.0,
+                            );
+
+                            Color cellColor = Colors.green;
+                            String label = '8h Free';
+                            String tooltipMsg =
+                                'Total: 8h\nBooked: 0h\nAvailable: 8h';
+
+                            if (onLeave) {
+                              cellColor = Colors.grey;
+                              label = 'Leave';
+                              tooltipMsg = 'Status: Vacation / Leave';
+                            } else if (allocatedHours > 8.0) {
+                              cellColor = Colors.purple;
+                              label =
+                                  '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h Over';
+                              tooltipMsg =
+                                  'Overloaded!\nTotal: 8h\nBooked: ${allocatedHours.toStringAsFixed(1)}h\nOverloaded: ${(allocatedHours - 8.0).toStringAsFixed(1)}h';
+                            } else if (allocatedHours == 8.0) {
+                              cellColor = Colors.orange;
+                              label = '8h Full';
+                              tooltipMsg = 'Fully Booked\nTotal: 8h\nBooked: 8h\nAvailable: 0h';
+                            } else if (allocatedHours > 0) {
+                              cellColor = Colors.amber.shade800;
+                              label =
+                                  '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h (${freeH.toStringAsFixed(1).replaceAll('.0', '')}h Free)';
+                              tooltipMsg =
+                                  'Booked: ${allocatedHours.toStringAsFixed(1)}h\nAvailable: ${freeH.toStringAsFixed(1)}h';
+                            }
+
+                            return DataCell(
+                              Tooltip(
+                                message: tooltipMsg,
+                                child: InkWell(
+                                  onTap: () => _showResourceDetailDialog(
+                                    empId,
+                                    name,
+                                    dateOnly,
+                                    allocatedHours,
+                                  ),
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: cellColor.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: cellColor.withValues(alpha: 0.5),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      label,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: cellColor,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      );
+                    }).toList(),
+                  ),
                 ),
               ],
             ),
-            const Divider(height: 24),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                headingRowHeight: 40,
-                dataRowMinHeight: 44,
-                columns: [
-                  const DataColumn(
-                    label: Text(
-                      'Resource Name',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  ...dates.map(
-                    (d) => DataColumn(
-                      label: Text(
-                        '${d.day}/${d.month}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ),
-                ],
-                rows: _profiles.map((p) {
-                  final empId = p['id']?.toString() ?? '';
-                  final name = p['full_name']?.toString() ?? 'Employee';
-
-                  return DataRow(
-                    cells: [
-                      DataCell(
-                        Text(
-                          name,
-                          style: const TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                      ...dates.map((d) {
-                        final dateOnly = DateTime(d.year, d.month, d.day);
-                        final onLeave = _isEmployeeOnLeave(empId, dateOnly);
-                        final allocatedHours = _getEmployeeAllocatedHours(
-                          empId,
-                          dateOnly,
-                        );
-
-                        Color cellColor = Colors.green;
-                        String label = '8h Free';
-
-                        if (onLeave) {
-                          cellColor = Colors.grey;
-                          label = 'Leave';
-                        } else if (allocatedHours > 8.0) {
-                          cellColor = Colors.purple;
-                          label =
-                              '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h Over';
-                        } else if (allocatedHours == 8.0) {
-                          cellColor = Colors.orange;
-                          label = '8h Full';
-                        } else if (allocatedHours > 0) {
-                          cellColor = Colors.amber.shade800;
-                          final freeH = (8.0 - allocatedHours).clamp(0.0, 8.0);
-                          label =
-                              '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h (${freeH.toStringAsFixed(1).replaceAll('.0', '')}h Free)';
-                        }
-
-                        return DataCell(
-                          InkWell(
-                            onTap: () => _showResourceDetailDialog(
-                              empId,
-                              name,
-                              dateOnly,
-                              allocatedHours,
-                            ),
-                            borderRadius: BorderRadius.circular(6),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: cellColor.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: cellColor.withValues(alpha: 0.5),
-                                ),
-                              ),
-                              child: Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: cellColor,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
-                  );
-                }).toList(),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
+  }
+
+  String _formatDateShort(DateTime d) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[d.month - 1]} ${d.day}, ${d.year}';
+  }
+
+  String _shortWeekday(int weekday) {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return days[weekday - 1];
   }
 
   Widget _legendItem(String label, Color color) {
