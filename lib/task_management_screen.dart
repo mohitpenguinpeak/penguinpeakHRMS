@@ -1958,6 +1958,10 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                   'Booked: ${allocatedHours.toStringAsFixed(1)}h\nAvailable: ${freeH.toStringAsFixed(1)}h';
                             }
 
+                            final progress = onLeave
+                                ? 0.0
+                                : (allocatedHours / 8.0).clamp(0.0, 1.0);
+
                             return DataCell(
                               Tooltip(
                                 message: tooltipMsg,
@@ -1969,26 +1973,11 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                     allocatedHours,
                                   ),
                                   borderRadius: BorderRadius.circular(6),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: cellColor.withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(6),
-                                      border: Border.all(
-                                        color: cellColor.withValues(alpha: 0.5),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      label,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: cellColor,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
+                                  child: _buildResourceCellWidget(
+                                    context,
+                                    label,
+                                    cellColor,
+                                    progress,
                                   ),
                                 ),
                               ),
@@ -2004,6 +1993,57 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildResourceCellWidget(
+    BuildContext context,
+    String label,
+    Color color,
+    double progress,
+  ) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      width: 82,
+      height: 38,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF16181F) : const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35), width: 1),
+      ),
+      child: Stack(
+        children: [
+          if (progress > 0)
+            FractionallySizedBox(
+              widthFactor: progress.clamp(0.0, 1.0),
+              heightFactor: 1.0,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: isDark ? 0.35 : 0.25),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
+            ),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
