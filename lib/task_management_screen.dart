@@ -1528,6 +1528,226 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     },
   );
 
+  double _getEmployeeAllocatedHours(String empId, DateTime dateOnly) {
+    double totalMins = 0;
+    for (final task in _tasks) {
+      if (task['assignee_id']?.toString() != empId) continue;
+      final status = (task['status'] ?? 'todo').toString();
+      if (status == 'completed' || status == 'declined') continue;
+
+      final dueDateStr = task['due_date']?.toString();
+      DateTime? taskDate;
+      if (dueDateStr != null && dueDateStr.isNotEmpty) {
+        taskDate = DateTime.tryParse(dueDateStr.split('T')[0]);
+      } else {
+        final createdStr = task['created_at']?.toString();
+        if (createdStr != null && createdStr.isNotEmpty) {
+          taskDate = DateTime.tryParse(createdStr.split('T')[0]);
+        }
+      }
+
+      if (taskDate != null &&
+          taskDate.year == dateOnly.year &&
+          taskDate.month == dateOnly.month &&
+          taskDate.day == dateOnly.day) {
+        final estStr = _extractBookingHours(task['description']);
+        final estNum = double.tryParse(estStr);
+        final taskHours = (estNum != null && estNum > 0) ? estNum : 2.0;
+        totalMins += (taskHours * 60);
+      }
+    }
+    return totalMins / 60.0;
+  }
+
+  List<Map<String, dynamic>> _getEmployeeAssignedTasksForDate(
+    String empId,
+    DateTime dateOnly,
+  ) {
+    final list = <Map<String, dynamic>>[];
+    for (final task in _tasks) {
+      if (task['assignee_id']?.toString() != empId) continue;
+      final status = (task['status'] ?? 'todo').toString();
+      if (status == 'completed' || status == 'declined') continue;
+
+      final dueDateStr = task['due_date']?.toString();
+      DateTime? taskDate;
+      if (dueDateStr != null && dueDateStr.isNotEmpty) {
+        taskDate = DateTime.tryParse(dueDateStr.split('T')[0]);
+      } else {
+        final createdStr = task['created_at']?.toString();
+        if (createdStr != null && createdStr.isNotEmpty) {
+          taskDate = DateTime.tryParse(createdStr.split('T')[0]);
+        }
+      }
+
+      if (taskDate != null &&
+          taskDate.year == dateOnly.year &&
+          taskDate.month == dateOnly.month &&
+          taskDate.day == dateOnly.day) {
+        list.add(task);
+      }
+    }
+    return list;
+  }
+
+  void _showResourceDetailDialog(
+    String empId,
+    String empName,
+    DateTime dateOnly,
+    double allocatedHours,
+  ) {
+    final dateStr = '${dateOnly.day}/${dateOnly.month}/${dateOnly.year}';
+    final tasks = _getEmployeeAssignedTasksForDate(empId, dateOnly);
+    final freeHours = (8.0 - allocatedHours).clamp(0.0, 8.0);
+    final progress = (allocatedHours / 8.0).clamp(0.0, 1.0);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Resource Availability • $empName'),
+        content: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Date: $dateStr',
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Daily Capacity (8h Limit)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  Text(
+                    '${allocatedHours.toStringAsFixed(1)}h / 8.0h (${(progress * 100).toStringAsFixed(0)}%)',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: allocatedHours > 8.0
+                          ? Colors.purple
+                          : allocatedHours == 8.0
+                          ? Colors.orange
+                          : Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 10,
+                  backgroundColor: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest,
+                  color: allocatedHours > 8.0
+                      ? Colors.purple
+                      : allocatedHours == 8.0
+                      ? Colors.orange
+                      : Colors.green,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                freeHours > 0
+                    ? '🟢 ${freeHours.toStringAsFixed(1)} Hours Free Available for new tasks'
+                    : allocatedHours > 8.0
+                    ? '⚠️ Overloaded by ${(allocatedHours - 8.0).toStringAsFixed(1)} Hours'
+                    : '🔴 Fully Booked (0h Free)',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const Divider(height: 24),
+              Text(
+                'Assigned Tasks (${tasks.length})',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (tasks.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    'No tasks assigned to this resource for this date.',
+                  ),
+                )
+              else
+                ...tasks.map((t) {
+                  final estStr = _extractBookingHours(t['description']);
+                  final estNum = double.tryParse(estStr);
+                  final taskHours = (estNum != null && estNum > 0)
+                      ? estNum
+                      : 2.0;
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                t['title'] ?? 'Task',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                'Status: ${t['status'] ?? 'todo'} • Priority: ${t['priority'] ?? 'medium'}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        StatusBadge(
+                          label: '${taskHours.toStringAsFixed(1)}h',
+                          color: const Color(0xFF6366F1),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _upsertTask();
+            },
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Assign Task'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildResourceAvailabilityMatrix() {
     final now = DateTime.now();
     final dates = List.generate(14, (i) => now.add(Duration(days: i)));
@@ -1543,15 +1763,15 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
               runSpacing: 12,
               children: [
                 const Text(
-                  'Team availability',
+                  'Team Availability & Hourly Workload Matrix',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 Wrap(
                   spacing: 12,
                   children: [
-                    _legendItem('Available', Colors.green),
-                    _legendItem('Booked', Colors.red),
-                    _legendItem('Overloaded', Colors.purple),
+                    _legendItem('Available (Free Hours)', Colors.green),
+                    _legendItem('Booked', Colors.orange),
+                    _legendItem('Overloaded (>8h)', Colors.purple),
                     _legendItem('Vacation / Leave', Colors.grey),
                   ],
                 ),
@@ -1594,44 +1814,59 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                       ...dates.map((d) {
                         final dateOnly = DateTime(d.year, d.month, d.day);
                         final onLeave = _isEmployeeOnLeave(empId, dateOnly);
-                        final taskCount = _getEmployeeActiveTaskCount(
+                        final allocatedHours = _getEmployeeAllocatedHours(
                           empId,
                           dateOnly,
                         );
 
                         Color cellColor = Colors.green;
-                        String label = 'Free';
+                        String label = '8h Free';
 
                         if (onLeave) {
                           cellColor = Colors.grey;
                           label = 'Leave';
-                        } else if (taskCount > 1) {
+                        } else if (allocatedHours > 8.0) {
                           cellColor = Colors.purple;
-                          label = '$taskCount tasks';
-                        } else if (taskCount == 1) {
-                          cellColor = Colors.red;
-                          label = 'Booked';
+                          label =
+                              '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h Over';
+                        } else if (allocatedHours == 8.0) {
+                          cellColor = Colors.orange;
+                          label = '8h Full';
+                        } else if (allocatedHours > 0) {
+                          cellColor = Colors.amber.shade800;
+                          final freeH = (8.0 - allocatedHours).clamp(0.0, 8.0);
+                          label =
+                              '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h (${freeH.toStringAsFixed(1).replaceAll('.0', '')}h Free)';
                         }
 
                         return DataCell(
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
+                          InkWell(
+                            onTap: () => _showResourceDetailDialog(
+                              empId,
+                              name,
+                              dateOnly,
+                              allocatedHours,
                             ),
-                            decoration: BoxDecoration(
-                              color: cellColor.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: cellColor.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
                               ),
-                            ),
-                            child: Text(
-                              label,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: cellColor,
-                                fontWeight: FontWeight.bold,
+                              decoration: BoxDecoration(
+                                color: cellColor.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: cellColor.withValues(alpha: 0.5),
+                                ),
+                              ),
+                              child: Text(
+                                label,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: cellColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ),
