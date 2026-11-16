@@ -1,3 +1,5 @@
+import 'shared/widgets/app_toast.dart';
+
 import 'dart:async';
 import 'dart:ui';
 
@@ -7,6 +9,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/theme/design_system.dart';
 import 'features/leave/domain/leave_request.dart';
 import 'features/tasks/domain/task_query.dart';
+import 'features/tasks/domain/task_booking.dart';
+import 'features/tasks/domain/task_time_summary.dart';
+import 'features/tasks/presentation/task_work_log_entry.dart';
+import 'features/tasks/presentation/manual_task_time_entry.dart';
+import 'features/tasks/presentation/booking_duration_picker.dart';
 import 'features/tasks/presentation/task_overview_panel.dart';
 import 'features/tasks/presentation/task_filter_panel.dart';
 import 'features/tasks/presentation/grouped_task_board.dart';
@@ -26,11 +33,16 @@ class TaskTracker {
   final ValueNotifier<int> activeSeconds = ValueNotifier<int>(0);
   final ValueNotifier<bool> isTimerRunning = ValueNotifier<bool>(false);
   Timer? _liveTimer;
+  bool _savingLog = false;
 
   final ValueNotifier<List<Map<String, dynamic>>> timelogs =
       ValueNotifier<List<Map<String, dynamic>>>([]);
 
   void startTimer(Map<String, dynamic> task) {
+    if (_savingLog) return;
+    if (activeTask.value?['id'] != task['id'] && activeSeconds.value > 0) {
+      throw StateError('Save the current timer before starting another task.');
+    }
     if (activeTask.value?['id'] != task['id']) {
       activeTask.value = task;
       activeSeconds.value = 0;
@@ -47,24 +59,35 @@ class TaskTracker {
     _liveTimer?.cancel();
   }
 
-  void stopAndLogTimer(String note) {
-    pauseTimer();
-    final secs = activeSeconds.value;
-    if (secs > 0 && activeTask.value != null) {
-      final hours = secs ~/ 3600;
-      final mins = (secs % 3600) ~/ 60;
-      addTimelog({
-        'id': DateTime.now().millisecondsSinceEpoch.toString(),
-        'task_id': activeTask.value!['id'],
-        'task_title': activeTask.value!['title'] ?? 'Task',
-        'logged_seconds': secs,
-        'logged_hours_fmt':
-            '${hours.toString().padLeft(2, '0')}:${mins.toString().padLeft(2, '0')}',
-        'note': note,
-        'date': DateTime.now().toIso8601String().split('T')[0],
-        'created_at': DateTime.now().toIso8601String(),
-      });
-      activeSeconds.value = 0;
+  Future<void> stopAndLogTimer(String note) async {
+    if (_savingLog) return;
+    _savingLog = true;
+    try {
+      pauseTimer();
+      final secs = activeSeconds.value;
+      if (secs > 0 && activeTask.value != null) {
+        final hours = secs ~/ 3600;
+        final mins = (secs % 3600) ~/ 60;
+        final log = <String, dynamic>{
+          'id': DateTime.now().millisecondsSinceEpoch.toString(),
+          'task_id': activeTask.value!['id'],
+          'task_title': activeTask.value!['title'] ?? 'Task',
+          'logged_seconds': secs,
+          'logged_hours_fmt':
+              '${hours.toString().padLeft(2, '0')}:${mins.toString().padLeft(2, '0')}',
+          'note': note,
+          'date': DateTime.now().toIso8601String().split('T')[0],
+          'created_at': DateTime.now().toIso8601String(),
+        };
+        await Supabase.instance.client.from('task_work_logs').insert({
+          ...log,
+          'employee_id': Supabase.instance.client.auth.currentUser!.id,
+        });
+        addTimelog(log);
+        activeSeconds.value = 0;
+      }
+    } finally {
+      _savingLog = false;
     }
   }
 
@@ -119,6 +142,8 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
   DateTimeRange? _dueRange;
   final _taskSearchController = TextEditingController();
   final ScrollController _matrixScrollController = ScrollController();
+  int _matrixStartOffset = 0;
+  int _matrixDayCount = 14;
 
   String? get _uid => _db.auth.currentUser?.id;
 
@@ -130,6 +155,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       if (mounted) setState(() {});
     });
     _loadData();
+    _refreshTimeLogs();
   }
 
   @override
@@ -150,7 +176,13 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
           .from('tasks')
           .select('*, task_comments(*)')
           .order('created_at', ascending: false);
-      _tasks = List<Map<String, dynamic>>.from(tasksRes);
+      _tasks = List<Map<String, dynamic>>.from(tasksRes)
+          .map(
+            (task) => task['status'] == 'blocked'
+                ? {...task, 'status': 'on_hold'}
+                : task,
+          )
+          .toList();
 
       final profilesRes = await _db
           .from('profiles')
@@ -185,7 +217,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
           if (task != null) {
             _viewTaskDetails(task);
           } else {
-            ScaffoldMessenger.of(context).showSnackBar(
+            AppToast.of(context).showSnackBar(
               const SnackBar(
                 content: Text('This task is no longer available.'),
               ),
@@ -237,7 +269,12 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       case 'declined':
         return Colors.red;
       case 'blocked':
+      case 'on_hold':
         return Colors.redAccent;
+      case 'pending':
+        return Colors.orange;
+      case 'in_review':
+        return Colors.purple;
       default:
         return Colors.amber;
     }
@@ -254,7 +291,12 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       case 'declined':
         return 'Declined';
       case 'blocked':
-        return 'Blocked';
+      case 'on_hold':
+        return 'On Hold';
+      case 'pending':
+        return 'Pending';
+      case 'in_review':
+        return 'In Review';
       case 'todo':
         return 'To Do';
       default:
@@ -574,7 +616,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('Booking accepted! Task is now In Progress.'),
           backgroundColor: Colors.green,
@@ -583,7 +625,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       _loadData();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Error accepting booking: $e'),
           backgroundColor: Colors.red,
@@ -649,7 +691,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('Booking request declined.'),
           backgroundColor: Colors.orange,
@@ -658,7 +700,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       _loadData();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Error declining booking: $e'),
           backgroundColor: Colors.red,
@@ -667,8 +709,24 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     }
   }
 
-  Future<void> _upsertTask({Map<String, dynamic>? existing}) async {
+  Future<void> _upsertTask({
+    Map<String, dynamic>? existing,
+    String? initialAssigneeId,
+    DateTime? initialDueDate,
+  }) async {
     final isEdit = existing != null;
+    final canEditDetails =
+        !isEdit || existing['creator_id']?.toString() == _uid;
+    if (isEdit &&
+        !canEditDetails &&
+        existing['assignee_id']?.toString() != _uid) {
+      AppToast.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only the creator or assignee can edit this task.'),
+        ),
+      );
+      return;
+    }
     final titleController = TextEditingController(
       text: existing?['title'] ?? '',
     );
@@ -679,22 +737,45 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     final descController = TextEditingController(
       text: rawDesc == 'No description provided.' ? '' : rawDesc,
     );
-    String assigneeId = existing?['assignee_id']?.toString() ?? _uid ?? '';
-    String initialStatus =
-        existing?['status'] ??
-        (assigneeId != _uid ? 'pending_acceptance' : 'todo');
+    String assigneeId =
+        existing?['assignee_id']?.toString() ?? initialAssigneeId ?? _uid ?? '';
+    String initialStatus = switch (existing?['status']) {
+      'blocked' => 'on_hold',
+      'declined' => 'pending',
+      final String status => status,
+      _ => 'todo',
+    };
     String priority = existing?['priority'] ?? 'medium';
+    final initialBookingMinutes =
+        (taskBookingHours(existing?['description']?.toString()) * 60).round();
     final hoursController = TextEditingController(
-      text: _extractBookingHours(existing?['description']),
+      text: (initialBookingMinutes / 60).toString(),
     );
     DateTime? dueDate = isEdit
         ? DateTime.tryParse('${existing['due_date']}')
-        : DateTime.now().add(const Duration(days: 3));
+        : initialDueDate ?? DateTime.now().add(const Duration(days: 3));
 
     final route = DialogRoute<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
+          final requiresAcceptance =
+              !isEdit &&
+              requiresBookingAcceptance(
+                tasks: _tasks,
+                assigneeId: assigneeId,
+                day: dueDate ?? DateTime.now(),
+                bookingHours: taskBookingHours(
+                  '[Booking: ${hoursController.text} hrs]',
+                ),
+              );
+          if (!isEdit) {
+            if (requiresAcceptance) {
+              initialStatus = 'pending_acceptance';
+            } else if (initialStatus == 'pending_acceptance') {
+              initialStatus = 'todo';
+            }
+          }
           final nextAvail = assigneeId.isNotEmpty
               ? _findNextAvailableDate(assigneeId)
               : DateTime.now();
@@ -754,6 +835,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                       ),
                     TextField(
                       controller: titleController,
+                      readOnly: !canEditDetails,
                       decoration: const InputDecoration(
                         labelText: 'Task Title / Deliverable *',
                       ),
@@ -761,11 +843,13 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                     const SizedBox(height: 12),
                     TextField(
                       controller: projectController,
+                      readOnly: !canEditDetails,
                       decoration: const InputDecoration(labelText: 'Project'),
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: descController,
+                      readOnly: !canEditDetails,
                       maxLines: 3,
                       decoration: const InputDecoration(
                         labelText: 'Description',
@@ -777,15 +861,19 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                         Expanded(
                           child: DropdownButtonFormField<String>(
                             isExpanded: true,
-                            value: initialStatus,
+                            key: ValueKey(initialStatus),
+                            initialValue: initialStatus,
                             decoration: const InputDecoration(
                               labelText: 'Status',
                             ),
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'pending_acceptance',
-                                child: Text('Pending Acceptance'),
-                              ),
+                            items: [
+                              if (requiresAcceptance ||
+                                  (isEdit &&
+                                      initialStatus == 'pending_acceptance'))
+                                const DropdownMenuItem(
+                                  value: 'pending_acceptance',
+                                  child: Text('Pending Acceptance'),
+                                ),
                               DropdownMenuItem(
                                 value: 'todo',
                                 child: Text('To Do'),
@@ -795,23 +883,29 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                 child: Text('In Progress'),
                               ),
                               DropdownMenuItem(
-                                value: 'blocked',
-                                child: Text('Blocked'),
+                                value: 'on_hold',
+                                child: Text('On Hold'),
                               ),
                               DropdownMenuItem(
-                                value: 'declined',
-                                child: Text('Declined'),
+                                value: 'pending',
+                                child: Text('Pending'),
                               ),
                               DropdownMenuItem(
                                 value: 'completed',
                                 child: Text('Completed'),
                               ),
+                              DropdownMenuItem(
+                                value: 'in_review',
+                                child: Text('In Review'),
+                              ),
                             ],
-                            onChanged: (v) {
-                              if (v != null) {
-                                setDialogState(() => initialStatus = v);
-                              }
-                            },
+                            onChanged: requiresAcceptance
+                                ? null
+                                : (v) {
+                                    if (v != null) {
+                                      setDialogState(() => initialStatus = v);
+                                    }
+                                  },
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -874,25 +968,33 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                           ),
                         ),
                       ],
-                      onChanged: (v) {
-                        if (v != null) {
-                          setDialogState(() {
-                            assigneeId = v;
-                            if (!isEdit && assigneeId != _uid) {
-                              initialStatus = 'pending_acceptance';
-                            }
-                          });
-                        }
-                      },
+                      onChanged: !canEditDetails
+                          ? null
+                          : (v) {
+                              if (v != null) {
+                                setDialogState(() {
+                                  assigneeId = v;
+                                });
+                              }
+                            },
                     ),
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: hoursController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Estimated Booking Hours',
+                    if (!canEditDetails)
+                      InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Estimated Booking Duration',
+                        ),
+                        child: Text(
+                          '${(initialBookingMinutes ~/ 60).toString().padLeft(2, '0')}:${(initialBookingMinutes % 60).toString().padLeft(2, '0')}',
+                        ),
+                      )
+                    else
+                      BookingDurationPicker(
+                        initialMinutes: initialBookingMinutes,
+                        onChanged: (minutes) => setDialogState(() {
+                          hoursController.text = (minutes / 60).toString();
+                        }),
                       ),
-                    ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
@@ -904,28 +1006,31 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                           ),
                         ),
                         OutlinedButton(
-                          onPressed: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: dueDate ?? DateTime.now(),
-                              firstDate: DateTime.now().subtract(
-                                const Duration(days: 365),
-                              ),
-                              lastDate: DateTime.now().add(
-                                const Duration(days: 730),
-                              ),
-                            );
-                            if (picked != null) {
-                              setDialogState(() => dueDate = picked);
-                            }
-                          },
+                          onPressed: !canEditDetails
+                              ? null
+                              : () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: dueDate ?? DateTime.now(),
+                                    firstDate: DateTime.now().subtract(
+                                      const Duration(days: 365),
+                                    ),
+                                    lastDate: DateTime.now().add(
+                                      const Duration(days: 730),
+                                    ),
+                                  );
+                                  if (picked != null) {
+                                    setDialogState(() => dueDate = picked);
+                                  }
+                                },
                           child: const Text('Select Due Date'),
                         ),
                         if (dueDate != null)
                           IconButton(
                             tooltip: 'Clear due date',
-                            onPressed: () =>
-                                setDialogState(() => dueDate = null),
+                            onPressed: !canEditDetails
+                                ? null
+                                : () => setDialogState(() => dueDate = null),
                             icon: const Icon(Icons.close),
                           ),
                       ],
@@ -942,7 +1047,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
               FilledButton(
                 onPressed: () async {
                   if (titleController.text.trim().isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    AppToast.of(context).showSnackBar(
                       const SnackBar(content: Text('Task title is required')),
                     );
                     return;
@@ -950,34 +1055,79 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                   try {
                     if (assigneeId.isEmpty)
                       throw const FormatException('Select an assignee.');
+                    // Refresh leave at save time rather than trusting the matrix cache.
+                    final bookingDate =
+                        dueDate ??
+                        DateTime.tryParse('${existing?['created_at']}') ??
+                        DateTime.now();
+                    if (canEditDetails) {
+                      final leaves = await _db
+                          .from('leave_requests')
+                          .select()
+                          .eq('employee_id', assigneeId)
+                          .eq('manager_status', 'approved')
+                          .eq('hr_status', 'approved')
+                          .isFilter('cancelled_at', null);
+                      if (leaves.any(
+                        (row) => LeaveRequest(row).covers(bookingDate),
+                      )) {
+                        throw FormatException(
+                          '${_employeeName(assigneeId)} is on approved leave on '
+                          '${bookingDate.toIso8601String().split('T').first}. '
+                          'Choose another date or assignee.',
+                        );
+                      }
+                    }
                     final hours = hoursController.text.trim();
                     final userDesc = descController.text.trim();
                     final estimate = double.tryParse(hours);
                     if (hours.isNotEmpty &&
                         (estimate == null ||
                             !estimate.isFinite ||
-                            estimate < 0)) {
+                            estimate <= 0)) {
                       throw const FormatException(
-                        'Estimated hours must be a non-negative number.',
+                        'Select a booking duration of at least one minute.',
                       );
                     }
                     final fullDesc = hours.isEmpty
                         ? userDesc
                         : '[Booking: $hours hrs] $userDesc';
 
+                    if (!isEdit) {
+                      final currentTasks = await _db
+                          .from('tasks')
+                          .select(
+                            'assignee_id, status, due_date, created_at, description',
+                          )
+                          .eq('assignee_id', assigneeId);
+                      final needsAcceptance = requiresBookingAcceptance(
+                        tasks: currentTasks,
+                        assigneeId: assigneeId,
+                        day: bookingDate,
+                        bookingHours: taskBookingHours(fullDesc),
+                      );
+                      if (needsAcceptance) {
+                        initialStatus = 'pending_acceptance';
+                      } else if (initialStatus == 'pending_acceptance') {
+                        initialStatus = 'todo';
+                      }
+                    }
+
                     final data = {
-                      'title': titleController.text.trim(),
-                      'description': fullDesc,
+                      if (canEditDetails) 'title': titleController.text.trim(),
+                      if (canEditDetails) 'description': fullDesc,
                       'status': initialStatus,
                       'priority': priority,
-                      'assignee_id': assigneeId,
+                      if (canEditDetails) 'assignee_id': assigneeId,
                       if (!isEdit) 'creator_id': _uid,
-                      'project': projectController.text.trim(),
+                      if (canEditDetails)
+                        'project': projectController.text.trim(),
                       'completed_at': initialStatus == 'completed'
                           ? (existing?['completed_at'] ??
                                 DateTime.now().toUtc().toIso8601String())
                           : null,
-                      'due_date': dueDate?.toIso8601String(),
+                      if (canEditDetails)
+                        'due_date': dueDate?.toIso8601String(),
                     };
 
                     if (isEdit) {
@@ -992,24 +1142,30 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                     if (!mounted) return;
                     Navigator.pop(dialogContext);
                     _loadData();
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    AppToast.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
                           isEdit
                               ? 'Booking updated'
-                              : assigneeId != _uid
+                              : initialStatus == 'pending_acceptance'
                               ? 'Resource booked! Sent acceptance request to ${_employeeName(assigneeId)}.'
                               : 'Task created successfully',
                         ),
                       ),
                     );
                   } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    AppToast.of(context).showSnackBar(
                       SnackBar(content: Text('Error saving booking: $e')),
                     );
                   }
                 },
-                child: Text(isEdit ? 'Save Booking' : 'Book & Send Request'),
+                child: Text(
+                  isEdit
+                      ? 'Save Booking'
+                      : requiresAcceptance
+                      ? 'Book & Send Request'
+                      : 'Assign Task',
+                ),
               ),
             ],
           );
@@ -1022,6 +1178,62 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     descController.dispose();
     projectController.dispose();
     hoursController.dispose();
+  }
+
+  Future<bool> _deleteTask(Map<String, dynamic> task) async {
+    if (_uid == null || task['creator_id']?.toString() != _uid) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete task?'),
+        content: Text(
+          'Delete "${task['title']}" and its comments? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return false;
+    try {
+      final deleted = await _db
+          .from('tasks')
+          .delete()
+          .eq('id', task['id'])
+          .eq('creator_id', _uid!)
+          .select('id');
+      if (deleted.isEmpty) {
+        throw StateError('Task was not deleted. Check your permissions.');
+      }
+      final tracker = TaskTracker.instance;
+      if (tracker.activeTask.value?['id'] == task['id']) {
+        tracker.pauseTimer();
+        tracker.activeTask.value = null;
+        tracker.activeSeconds.value = 0;
+      }
+      if (tracker.preBreakTask?['id'] == task['id']) {
+        tracker.preBreakTask = null;
+      }
+      if (!mounted) return true;
+      await _loadData();
+      if (!mounted) return true;
+      AppToast.of(context)
+          .showSnackBar(const SnackBar(content: Text('Task deleted')));
+      return true;
+    } catch (e) {
+      if (mounted) {
+        AppToast.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not delete task: $e')));
+      }
+      return false;
+    }
   }
 
   Future<void> _viewTaskDetails(Map<String, dynamic> task) async {
@@ -1053,6 +1265,23 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     TaskOverviewPanel(task: task, employeeName: _employeeName),
+                    const SizedBox(height: 16),
+                    _TaskTimerPanel(
+                      task: task,
+                      onManualEntry:
+                          isAssignee &&
+                              ![
+                                'pending_acceptance',
+                                'declined',
+                              ].contains(task['status'])
+                          ? () => _showManualTimeEntryDialog(task)
+                          : null,
+                      canTrack:
+                          isAssignee &&
+                          !isPending &&
+                          task['status'] != 'completed' &&
+                          task['status'] != 'declined',
+                    ),
                     const SizedBox(height: 16),
                     if (isAssignee && isPending)
                       Card(
@@ -1127,37 +1356,6 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (TaskTracker.instance.activeTask.value?['id'] ==
-                            task['id'])
-                          const Chip(
-                            label: Text('Active Task'),
-                            backgroundColor: Colors.amber,
-                          )
-                        else if (!isPending &&
-                            task['status'] != 'completed' &&
-                            task['status'] != 'declined')
-                          OutlinedButton.icon(
-                            onPressed: () {
-                              TaskTracker.instance.activeTask.value = task;
-                              if (task['status'] == 'todo') {
-                                _db
-                                    .from('tasks')
-                                    .update({'status': 'in_progress'})
-                                    .eq('id', task['id'])
-                                    .then((_) => _loadData());
-                              }
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Set as Active Task for break continuity',
-                                  ),
-                                ),
-                              );
-                              setDialogState(() {});
-                            },
-                            icon: const Icon(Icons.play_arrow),
-                            label: const Text('Set Active'),
-                          ),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -1231,7 +1429,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                               });
                               _loadData();
                             } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              AppToast.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text('Error adding comment: $e'),
                                 ),
@@ -1246,6 +1444,16 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
               ),
             ),
             actions: [
+              if (_uid != null && task['creator_id']?.toString() == _uid)
+                TextButton.icon(
+                  onPressed: () async {
+                    if (await _deleteTask(task) && dialogContext.mounted) {
+                      Navigator.pop(dialogContext);
+                    }
+                  },
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete task'),
+                ),
               OutlinedButton.icon(
                 onPressed: () {
                   Navigator.pop(dialogContext);
@@ -1279,7 +1487,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                       await _loadData();
                     } catch (_) {
                       if (dialogContext.mounted)
-                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        AppToast.of(dialogContext).showSnackBar(
                           const SnackBar(
                             content: Text(
                               'Could not complete this task. Please retry.',
@@ -1381,16 +1589,20 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                           child: Text('In Progress'),
                         ),
                         DropdownMenuItem(
-                          value: 'blocked',
-                          child: Text('Blocked'),
+                          value: 'on_hold',
+                          child: Text('On Hold'),
                         ),
                         DropdownMenuItem(
-                          value: 'declined',
-                          child: Text('Declined'),
+                          value: 'pending',
+                          child: Text('Pending'),
                         ),
                         DropdownMenuItem(
                           value: 'completed',
                           child: Text('Completed'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'in_review',
+                          child: Text('In Review'),
                         ),
                       ],
                       onChanged: (v) {
@@ -1739,12 +1951,21 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
             child: const Text('Close'),
           ),
           FilledButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              _upsertTask();
-            },
+            onPressed: _isEmployeeOnLeave(empId, dateOnly)
+                ? null
+                : () {
+                    Navigator.pop(context);
+                    _upsertTask(
+                      initialAssigneeId: empId,
+                      initialDueDate: dateOnly,
+                    );
+                  },
             icon: const Icon(Icons.add, size: 16),
-            label: const Text('Assign Task'),
+            label: Text(
+              _isEmployeeOnLeave(empId, dateOnly)
+                  ? 'On leave — assignment unavailable'
+                  : 'Assign Task',
+            ),
           ),
         ],
       ),
@@ -1753,7 +1974,15 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
 
   Widget _buildResourceAvailabilityMatrix() {
     final now = DateTime.now();
-    final dates = List.generate(14, (i) => now.add(Duration(days: i)));
+    final startDate = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).add(Duration(days: _matrixStartOffset));
+    final dates = List.generate(
+      _matrixDayCount,
+      (i) => startDate.add(Duration(days: i)),
+    );
 
     int totalResources = _profiles.length;
     int availableResources = 0;
@@ -1789,7 +2018,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
               mainAxisSpacing: 12,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: isWide ? 2.0 : 1.5,
+              mainAxisExtent: 128,
               children: [
                 MetricCard(
                   title: 'Total Resources',
@@ -1822,33 +2051,39 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
         const SizedBox(height: 20),
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 16,
+                  runSpacing: 12,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  alignment: WrapAlignment.spaceBetween,
                   children: [
                     Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         IconButton(
                           icon: const Icon(Icons.chevron_left),
-                          tooltip: 'Scroll timeline left',
-                          onPressed: () {
-                            if (_matrixScrollController.hasClients) {
-                              _matrixScrollController.animateTo(
-                                (_matrixScrollController.offset - 280).clamp(
-                                  0.0,
-                                  _matrixScrollController
-                                      .position
-                                      .maxScrollExtent,
-                                ),
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeOut,
-                              );
-                            }
-                          },
+                          tooltip: 'Previous Period',
+                          onPressed: () => setState(
+                            () => _matrixStartOffset -= _matrixDayCount,
+                          ),
                         ),
+                        TextButton(
+                          onPressed: () =>
+                              setState(() => _matrixStartOffset = 0),
+                          child: const Text('Today'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.chevron_right),
+                          tooltip: 'Next Period',
+                          onPressed: () => setState(
+                            () => _matrixStartOffset += _matrixDayCount,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         Text(
                           'Displaying ${_formatDateShort(dates.first)} to ${_formatDateShort(dates.last)}',
                           style: TextStyle(
@@ -1859,195 +2094,217 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.chevron_right),
-                          tooltip: 'Scroll timeline right',
-                          onPressed: () {
-                            if (_matrixScrollController.hasClients) {
-                              _matrixScrollController.animateTo(
-                                (_matrixScrollController.offset + 280).clamp(
-                                  0.0,
-                                  _matrixScrollController
-                                      .position
-                                      .maxScrollExtent,
-                                ),
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeOut,
-                              );
-                            }
-                          },
-                        ),
                       ],
                     ),
-                    Wrap(
-                      spacing: 12,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        _legendItem('Available (Free Hours)', Colors.green),
-                        _legendItem('Booked', Colors.orange),
-                        _legendItem('Overloaded (>8h)', Colors.purple),
-                        _legendItem('Vacation / Leave', Colors.grey),
+                        SegmentedButton<int>(
+                          segments: const [
+                            ButtonSegment(value: 7, label: Text('7D')),
+                            ButtonSegment(value: 14, label: Text('14D')),
+                            ButtonSegment(value: 30, label: Text('30D')),
+                          ],
+                          selected: {_matrixDayCount},
+                          onSelectionChanged: (val) =>
+                              setState(() => _matrixDayCount = val.first),
+                        ),
+                        const SizedBox(width: 12),
+                        Wrap(
+                          spacing: 10,
+                          children: [
+                            _legendItem('Free', Colors.green),
+                            _legendItem('Booked', Colors.orange),
+                            _legendItem('Overloaded', Colors.purple),
+                            _legendItem('Leave', Colors.grey),
+                          ],
+                        ),
                       ],
                     ),
                   ],
                 ),
                 const Divider(height: 24),
-                ScrollConfiguration(
-                  behavior: ScrollConfiguration.of(context).copyWith(
-                    dragDevices: {
-                      PointerDeviceKind.touch,
-                      PointerDeviceKind.mouse,
-                      PointerDeviceKind.trackpad,
-                    },
-                  ),
-                  child: Scrollbar(
-                    controller: _matrixScrollController,
-                    thumbVisibility: true,
-                    child: SingleChildScrollView(
+                LayoutBuilder(
+                  builder: (context, constraints) => ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(context).copyWith(
+                      dragDevices: {
+                        PointerDeviceKind.touch,
+                        PointerDeviceKind.mouse,
+                        PointerDeviceKind.trackpad,
+                      },
+                    ),
+                    child: Scrollbar(
                       controller: _matrixScrollController,
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        headingRowHeight: 44,
-                        dataRowMinHeight: 48,
-                        columns: [
-                          const DataColumn(
-                            label: Text(
-                              'Resource Name',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
+                      thumbVisibility: true,
+                      trackVisibility: true,
+                      scrollbarOrientation: ScrollbarOrientation.bottom,
+                      child: SingleChildScrollView(
+                        controller: _matrixScrollController,
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minWidth: constraints.maxWidth,
                           ),
-                          ...dates.map(
-                            (d) => DataColumn(
-                              label: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    '${d.day}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    _shortWeekday(d.weekday),
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                        rows: _profiles.map((p) {
-                          final empId = p['id']?.toString() ?? '';
-                          final name = p['full_name']?.toString() ?? 'Employee';
-
-                          double total14DaysAllocated = 0;
-                          for (final d in dates) {
-                            total14DaysAllocated += _getEmployeeAllocatedHours(
-                              empId,
-                              DateTime(d.year, d.month, d.day),
-                            );
-                          }
-                          final totalCapacityMins = dates.length * 8;
-
-                          return DataRow(
-                            cells: [
-                              DataCell(
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      name,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${total14DaysAllocated.toStringAsFixed(0)}h / ${totalCapacityMins}h',
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ],
+                          child: DataTable(
+                            columnSpacing: 20,
+                            headingRowHeight: 44,
+                            dataRowMinHeight: 48,
+                            columns: [
+                              const DataColumn(
+                                label: Text(
+                                  'Resource Name',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
                               ),
-                              ...dates.map((d) {
-                                final dateOnly = DateTime(
-                                  d.year,
-                                  d.month,
-                                  d.day,
-                                );
-                                final onLeave = _isEmployeeOnLeave(
-                                  empId,
-                                  dateOnly,
-                                );
-                                final allocatedHours =
-                                    _getEmployeeAllocatedHours(empId, dateOnly);
-                                final freeH = (8.0 - allocatedHours).clamp(
-                                  0.0,
-                                  8.0,
-                                );
-
-                                Color cellColor = Colors.green;
-                                String label = '8h Free';
-                                String tooltipMsg =
-                                    'Total: 8h\nBooked: 0h\nAvailable: 8h';
-
-                                if (onLeave) {
-                                  cellColor = Colors.grey;
-                                  label = 'Leave';
-                                  tooltipMsg = 'Status: Vacation / Leave';
-                                } else if (allocatedHours > 8.0) {
-                                  cellColor = Colors.purple;
-                                  label =
-                                      '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h Over';
-                                  tooltipMsg =
-                                      'Overloaded!\nTotal: 8h\nBooked: ${allocatedHours.toStringAsFixed(1)}h\nOverloaded: ${(allocatedHours - 8.0).toStringAsFixed(1)}h';
-                                } else if (allocatedHours == 8.0) {
-                                  cellColor = Colors.orange;
-                                  label = '8h Full';
-                                  tooltipMsg = 'Fully Booked\nTotal: 8h\nBooked: 8h\nAvailable: 0h';
-                                } else if (allocatedHours > 0) {
-                                  cellColor = Colors.amber.shade800;
-                                  label =
-                                      '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h (${freeH.toStringAsFixed(1).replaceAll('.0', '')}h Free)';
-                                  tooltipMsg =
-                                      'Booked: ${allocatedHours.toStringAsFixed(1)}h\nAvailable: ${freeH.toStringAsFixed(1)}h';
-                                }
-
-                                final progress = onLeave
-                                    ? 0.0
-                                    : (allocatedHours / 8.0).clamp(0.0, 1.0);
-
-                                return DataCell(
-                                  Tooltip(
-                                    message: tooltipMsg,
-                                    child: InkWell(
-                                      onTap: () => _showResourceDetailDialog(
-                                        empId,
-                                        name,
-                                        dateOnly,
-                                        allocatedHours,
+                              ...dates.map(
+                                (d) => DataColumn(
+                                  label: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        '${d.day}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
                                       ),
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: _buildResourceCellWidget(
-                                        context,
-                                        label,
-                                        cellColor,
-                                        progress,
+                                      Text(
+                                        _shortWeekday(d.weekday),
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.grey,
+                                        ),
                                       ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                            rows: _profiles.map((p) {
+                              final empId = p['id']?.toString() ?? '';
+                              final name =
+                                  p['full_name']?.toString() ?? 'Employee';
+
+                              double total14DaysAllocated = 0;
+                              for (final d in dates) {
+                                total14DaysAllocated +=
+                                    _getEmployeeAllocatedHours(
+                                      empId,
+                                      DateTime(d.year, d.month, d.day),
+                                    );
+                              }
+                              final totalCapacityMins = dates.length * 8;
+
+                              return DataRow(
+                                cells: [
+                                  DataCell(
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          name,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${total14DaysAllocated.toStringAsFixed(0)}h / ${totalCapacityMins}h',
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                );
-                              }),
-                            ],
-                          );
-                        }).toList(),
+                                  ...dates.map((d) {
+                                    final dateOnly = DateTime(
+                                      d.year,
+                                      d.month,
+                                      d.day,
+                                    );
+                                    final onLeave = _isEmployeeOnLeave(
+                                      empId,
+                                      dateOnly,
+                                    );
+                                    final allocatedHours =
+                                        _getEmployeeAllocatedHours(
+                                          empId,
+                                          dateOnly,
+                                        );
+                                    final freeH = (8.0 - allocatedHours).clamp(
+                                      0.0,
+                                      8.0,
+                                    );
+
+                                    Color cellColor = Colors.green;
+                                    String label = '8h Free';
+                                    String tooltipMsg =
+                                        'Total: 8h\nBooked: 0h\nAvailable: 8h';
+
+                                    if (onLeave) {
+                                      cellColor = Colors.grey;
+                                      label = 'Leave';
+                                      tooltipMsg = 'Status: Vacation / Leave';
+                                    } else if (allocatedHours > 8.0) {
+                                      cellColor = Colors.purple;
+                                      label =
+                                          '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h Over';
+                                      tooltipMsg =
+                                          'Overloaded!\nTotal: 8h\nBooked: ${allocatedHours.toStringAsFixed(1)}h\nOverloaded: ${(allocatedHours - 8.0).toStringAsFixed(1)}h';
+                                    } else if (allocatedHours == 8.0) {
+                                      cellColor = Colors.orange;
+                                      label = '8h Full';
+                                      tooltipMsg = 'Fully Booked\nTotal: 8h\nBooked: 8h\nAvailable: 0h';
+                                    } else if (allocatedHours > 0) {
+                                      cellColor = Colors.amber.shade800;
+                                      label =
+                                          '${allocatedHours.toStringAsFixed(1).replaceAll('.0', '')}h (${freeH.toStringAsFixed(1).replaceAll('.0', '')}h Free)';
+                                      tooltipMsg =
+                                          'Booked: ${allocatedHours.toStringAsFixed(1)}h\nAvailable: ${freeH.toStringAsFixed(1)}h';
+                                    }
+
+                                    final progress = onLeave
+                                        ? 0.0
+                                        : (allocatedHours / 8.0).clamp(
+                                            0.0,
+                                            1.0,
+                                          );
+
+                                    return DataCell(
+                                      Tooltip(
+                                        message: tooltipMsg,
+                                        child: InkWell(
+                                          onTap: () =>
+                                              _showResourceDetailDialog(
+                                                empId,
+                                                name,
+                                                dateOnly,
+                                                allocatedHours,
+                                              ),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                          child: _buildResourceCellWidget(
+                                            context,
+                                            label,
+                                            cellColor,
+                                            progress,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                                ],
+                              );
+                            }).toList(),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -2234,6 +2491,13 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                           icon: const Icon(Icons.edit_outlined),
                           label: const Text('Edit'),
                         ),
+                        if (_uid != null &&
+                            task['creator_id']?.toString() == _uid)
+                          TextButton.icon(
+                            onPressed: () => _deleteTask(task),
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Delete'),
+                          ),
                         TextButton.icon(
                           onPressed: () => _viewTaskDetails(task),
                           icon: const Icon(Icons.chat_bubble_outline),
@@ -2250,324 +2514,304 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     );
   }
 
+  String? _timeLogError;
+  bool _loadingTimeLogs = false;
+
+  Future<void> _refreshTimeLogs() async {
+    if (_loadingTimeLogs || _uid == null) return;
+    setState(() {
+      _loadingTimeLogs = true;
+      _timeLogError = null;
+    });
+    try {
+      final saved = await _db
+          .from('task_work_logs')
+          .select()
+          .eq('employee_id', _uid!)
+          .order('created_at', ascending: false);
+      if (!mounted) return;
+      final merged = <String, Map<String, dynamic>>{
+        for (final log in TaskTracker.instance.timelogs.value)
+          '${log['id']}': log,
+        for (final log in saved) '${log['id']}': log,
+      };
+      TaskTracker.instance.timelogs.value = merged.values.toList();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _timeLogError = 'Could not refresh saved time logs. Please retry.';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingTimeLogs = false;
+        });
+      }
+    }
+  }
+
   Widget _buildTimelogTabView() {
     return ValueListenableBuilder<List<Map<String, dynamic>>>(
       valueListenable: TaskTracker.instance.timelogs,
       builder: (context, logs, child) {
-        int totalSeconds = logs.fold<int>(
+        final summaries = summarizeTaskTime(logs);
+        final total = summaries.fold<int>(
           0,
-          (sum, log) => sum + ((log['logged_seconds'] as num?)?.toInt() ?? 0),
+          (sum, row) => sum + (row['seconds'] as int),
         );
-        final totalHours = totalSeconds ~/ 3600;
-        final totalMins = (totalSeconds % 3600) ~/ 60;
-        final loggedHoursStr =
-            '${totalHours.toString().padLeft(2, '0')}:${totalMins.toString().padLeft(2, '0')}';
-
+        final estimated = _tasks
+            .where((task) => task['assignee_id']?.toString() == _uid)
+            .fold<double>(
+              0,
+              (sum, task) =>
+                  sum + taskBookingHours(task['description']?.toString()),
+            );
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Top Summary KPI Cards Header (OrangeScrum Style)
             LayoutBuilder(
-              builder: (context, constraints) {
-                final isWide = constraints.maxWidth >= 800;
-                return GridView.count(
-                  crossAxisCount: isWide ? 4 : 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  childAspectRatio: isWide ? 2.0 : 1.5,
-                  children: [
-                    MetricCard(
-                      title: 'Estimated Hours',
-                      value: '82:00',
-                      icon: Icons.timer_outlined,
-                      accentColor: Colors.amber,
-                    ),
-                    MetricCard(
-                      title: 'Logged Hours',
-                      value: loggedHoursStr,
-                      icon: Icons.check_circle_outline,
-                      accentColor: Colors.green,
-                    ),
-                    MetricCard(
-                      title: 'Billable Hours',
-                      value: '0:00',
-                      icon: Icons.attach_money,
-                      accentColor: Colors.blue,
-                    ),
-                    MetricCard(
-                      title: 'Non-Billable Hours',
-                      value: loggedHoursStr,
-                      icon: Icons.work_outline,
-                      accentColor: Colors.purple,
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 20),
-            // Live Digital Timer Card
-            GlassCard(
-              padding: const EdgeInsets.all(20),
-              child: ValueListenableBuilder<int>(
-                valueListenable: TaskTracker.instance.activeSeconds,
-                builder: (context, secs, child) {
-                  final h = (secs ~/ 3600).toString().padLeft(2, '0');
-                  final m = ((secs % 3600) ~/ 60).toString().padLeft(2, '0');
-                  final s = (secs % 60).toString().padLeft(2, '0');
-                  final clockStr = '$h:$m:$s';
-                  final activeTask = TaskTracker.instance.activeTask.value;
-                  final isRunning = TaskTracker.instance.isTimerRunning.value;
-
-                  return Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Live Task Timer',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              Text(
-                                activeTask != null
-                                    ? 'Tracking: ${activeTask['title']}'
-                                    : 'No active task selected for timing',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                          StatusBadge(
-                            label: isRunning ? 'TIMING ACTIVE ⏱️' : 'PAUSED',
-                            color: isRunning ? Colors.green : Colors.grey,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        clockStr,
-                        style: const TextStyle(
-                          fontSize: 42,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 2,
-                          color: Color(0xFF6366F1),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 8,
-                        children: [
-                          if (isRunning) ...[
-                            OutlinedButton.icon(
-                              onPressed: () {
-                                TaskTracker.instance.pauseTimer();
-                                setState(() {});
-                              },
-                              icon: const Icon(Icons.pause),
-                              label: const Text('Pause Timer'),
-                            ),
-                            FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Colors.orange,
-                              ),
-                              onPressed: () {
-                                TaskTracker.instance.stopAndLogTimer(
-                                  'Live task timer logged.',
-                                );
-                                setState(() {});
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('⏱️ Time logged!'),
-                                    backgroundColor: Colors.green,
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.stop),
-                              label: const Text('Stop & Save Log'),
-                            ),
-                          ] else
-                            FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Colors.green,
-                              ),
-                              onPressed: () {
-                                if (_tasks.isNotEmpty) {
-                                  TaskTracker.instance.startTimer(
-                                    activeTask ?? _tasks.first,
-                                  );
-                                  setState(() {});
-                                }
-                              },
-                              icon: const Icon(Icons.play_arrow),
-                              label: const Text('Start Timer'),
-                            ),
-                          FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFF6366F1),
-                            ),
-                            onPressed: () => _showManualTimeEntryDialog(),
-                            icon: const Icon(Icons.add_task),
-                            label: const Text('Log Time Entry'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  );
-                },
+              builder: (context, box) => GridView.count(
+                crossAxisCount: box.maxWidth >= 800
+                    ? 3
+                    : box.maxWidth >= 450
+                    ? 2
+                    : 1,
+                mainAxisExtent: 116,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  MetricCard(
+                    title: 'Total logged time',
+                    value: formatTaskTime(total),
+                    icon: Icons.timer_outlined,
+                    accentColor: const Color(0xFF6366F1),
+                  ),
+                  MetricCard(
+                    title: 'Tasks with logged time',
+                    value: '${summaries.length}',
+                    icon: Icons.task_alt,
+                    accentColor: Colors.green,
+                  ),
+                  MetricCard(
+                    title: 'Estimated task time',
+                    value: formatTaskTime((estimated * 3600).round()),
+                    icon: Icons.schedule,
+                    accentColor: Colors.orange,
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 20),
-            // Timelog Entries Table (OrangeScrum Style)
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'Task Timelogs',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Time by task',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Combined time across all sessions. Use the header timer to track work.',
+                              ),
+                            ],
                           ),
                         ),
-                        Text(
-                          '${logs.length} timelog entries',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                          ),
+                        IconButton(
+                          tooltip: 'Add time entry',
+                          onPressed: _showManualTimeEntryDialog,
+                          icon: const Icon(Icons.add),
+                        ),
+                        IconButton(
+                          tooltip: 'Refresh saved logs',
+                          onPressed: _loadingTimeLogs ? null : _refreshTimeLogs,
+                          icon: const Icon(Icons.refresh),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    if (logs.isEmpty)
+                    if (_loadingTimeLogs) const LinearProgressIndicator(),
+                    if (_timeLogError != null)
+                      Text(
+                        _timeLogError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    if (summaries.isEmpty)
                       const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(
-                          child: Text(
-                            'No timelogs recorded yet. Click "Log Time Entry" or "Start Timer" on a task.',
-                          ),
+                        padding: EdgeInsets.all(32),
+                        child: Column(
+                          children: [
+                            Icon(Icons.av_timer, size: 40),
+                            SizedBox(height: 12),
+                            Text('No time logged yet'),
+                            SizedBox(height: 4),
+                            Text(
+                              'Start the header timer on an assigned task to begin.',
+                            ),
+                          ],
                         ),
                       )
                     else
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: DataTable(
-                          columns: const [
-                            DataColumn(
-                              label: Text(
-                                'DATE',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
-                                ),
+                      LayoutBuilder(
+                        builder: (context, box) => SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(minWidth: box.maxWidth),
+                            child: DataTable(
+                              showCheckboxColumn: false,
+                              headingRowColor: WidgetStatePropertyAll(
+                                Theme.of(context).colorScheme.primary
+                                    .withValues(alpha: 0.06),
                               ),
-                            ),
-                            DataColumn(
-                              label: Text(
-                                'TASK TITLE',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
+                              dataRowMinHeight: 64,
+                              dataRowMaxHeight: 72,
+                              columns: const [
+                                DataColumn(label: Text('Task')),
+                                DataColumn(label: Text('Status')),
+                                DataColumn(
+                                  label: Text('Total logged'),
+                                  numeric: true,
                                 ),
-                              ),
-                            ),
-                            DataColumn(
-                              label: Text(
-                                'LOGGED HOURS',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                            DataColumn(
-                              label: Text(
-                                'NOTE',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                            DataColumn(
-                              label: Text(
-                                'ACTIONS',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                          ],
-                          rows: logs.map((log) {
-                            return DataRow(
-                              cells: [
-                                DataCell(
-                                  Text(
-                                    log['date']?.toString() ?? '-',
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ),
-                                DataCell(
-                                  Text(
-                                    log['task_title']?.toString() ?? '-',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                DataCell(
-                                  StatusBadge(
-                                    label:
-                                        log['logged_hours_fmt']?.toString() ??
-                                        '00:00',
-                                    color: Colors.green,
-                                  ),
-                                ),
-                                DataCell(
-                                  Text(
-                                    log['note']?.toString() ?? '—',
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ),
-                                DataCell(
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.delete_outline,
-                                      size: 18,
-                                      color: Colors.red,
-                                    ),
-                                    onPressed: () {
-                                      TaskTracker
-                                          .instance
-                                          .timelogs
-                                          .value = TaskTracker
-                                          .instance
-                                          .timelogs
-                                          .value
-                                          .where((l) => l['id'] != log['id'])
-                                          .toList();
-                                    },
-                                  ),
-                                ),
+                                DataColumn(label: Text('Last logged')),
+                                DataColumn(label: Text('Timer')),
                               ],
-                            );
-                          }).toList(),
+                              rows: summaries.map((row) {
+                                final date = DateTime.tryParse(
+                                  row['last_logged'] as String,
+                                )?.toLocal();
+                                final dateText = date == null
+                                    ? '—'
+                                    : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}  ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                                final task = _tasks
+                                    .where(
+                                      (task) =>
+                                          task['id']?.toString() ==
+                                          row['task_id']?.toString(),
+                                    )
+                                    .firstOrNull;
+                                final status = task?['status']?.toString();
+                                final canTrack =
+                                    task != null &&
+                                    task['assignee_id']?.toString() == _uid &&
+                                    ![
+                                      'completed',
+                                      'declined',
+                                      'pending_acceptance',
+                                    ].contains(status);
+                                return DataRow(
+                                  onSelectChanged: task == null
+                                      ? null
+                                      : (_) => _viewTaskDetails(task),
+                                  cells: [
+                                    DataCell(
+                                      Text(
+                                        '${row['task_title']}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    DataCell(
+                                      StatusBadge(
+                                        label: status == null
+                                            ? 'Unavailable'
+                                            : _statusLabel(status),
+                                        color: status == null
+                                            ? Colors.grey
+                                            : _statusColor(status),
+                                      ),
+                                    ),
+                                    DataCell(
+                                      Text(
+                                        formatTaskTime(row['seconds'] as int),
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    DataCell(Text(dateText)),
+                                    DataCell(
+                                      ListenableBuilder(
+                                        listenable: Listenable.merge([
+                                          TaskTracker.instance.activeTask,
+                                          TaskTracker.instance.activeSeconds,
+                                          TaskTracker.instance.isTimerRunning,
+                                        ]),
+                                        builder: (context, _) {
+                                          final tracker = TaskTracker.instance;
+                                          final selected =
+                                              tracker.activeTask.value?['id']
+                                                  ?.toString() ==
+                                              row['task_id']?.toString();
+                                          final running =
+                                              selected &&
+                                              tracker.isTimerRunning.value;
+                                          final hasTime =
+                                              selected &&
+                                              tracker.activeSeconds.value > 0;
+                                          return TextButton.icon(
+                                            onPressed: !canTrack
+                                                ? null
+                                                : () {
+                                                    try {
+                                                      if (running) {
+                                                        tracker.pauseTimer();
+                                                      } else {
+                                                        tracker.startTimer(
+                                                          task,
+                                                        );
+                                                        _viewTaskDetails(task);
+                                                      }
+                                                    } catch (e) {
+                                                      AppToast.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        SnackBar(
+                                                          content: Text('$e'),
+                                                        ),
+                                                      );
+                                                    }
+                                                  },
+                                            icon: Icon(
+                                              running
+                                                  ? Icons.pause
+                                                  : Icons.play_arrow,
+                                            ),
+                                            label: Text(
+                                              running
+                                                  ? 'Pause'
+                                                  : hasTime
+                                                  ? 'Resume'
+                                                  : 'Start Timer',
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }).toList(),
+                            ),
+                          ),
                         ),
                       ),
                   ],
@@ -2580,116 +2824,325 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     );
   }
 
-  void _showManualTimeEntryDialog([Map<String, dynamic>? initialTask]) {
-    Map<String, dynamic>? selectedTask =
-        initialTask ?? (_tasks.isNotEmpty ? _tasks.first : null);
-    final hoursController = TextEditingController(text: '1');
-    final minsController = TextEditingController(text: '0');
-    final noteController = TextEditingController();
+  Future<void> _showManualTimeEntryDialog([
+    Map<String, dynamic>? initialTask,
+  ]) async {
+    final eligible = _tasks
+        .where(
+          (task) =>
+              task['assignee_id']?.toString() == _uid &&
+              !['pending_acceptance', 'declined'].contains(task['status']),
+        )
+        .toList();
+    final log = await showManualTaskTimeEntry(
+      context,
+      eligible,
+      taskId: initialTask?['id']?.toString(),
+    );
+    if (log == null) return;
+    TaskTracker.instance.addTimelog(log);
+    if (mounted)
+      AppToast.of(context)
+          .showSnackBar(const SnackBar(content: Text('Time entry saved')));
+  }
+}
 
-    showDialog(
+class _TaskTimerPanel extends StatefulWidget {
+  const _TaskTimerPanel({
+    required this.task,
+    required this.canTrack,
+    this.onManualEntry,
+  });
+  final Future<void> Function()? onManualEntry;
+  final Map<String, dynamic> task;
+  final bool canTrack;
+
+  @override
+  State<_TaskTimerPanel> createState() => _TaskTimerPanelState();
+}
+
+class _TaskTimerPanelState extends State<_TaskTimerPanel> {
+  final _note = TextEditingController();
+  late Future<List<Map<String, dynamic>>> _logs;
+  bool _saving = false;
+  final Set<String> _deleting = {};
+
+  Future<List<Map<String, dynamic>>> _loadLogs() async => await Supabase
+      .instance
+      .client
+      .from('task_work_logs')
+      .select()
+      .eq('task_id', widget.task['id'])
+      .order('created_at', ascending: false);
+
+  @override
+  void initState() {
+    super.initState();
+    _logs = _loadLogs();
+  }
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  void _refreshLogs() {
+    final logs = _loadLogs();
+    setState(() {
+      _logs = logs;
+    });
+  }
+
+  Future<void> _deleteLog(Map<String, dynamic> log) async {
+    final db = Supabase.instance.client;
+    final uid = db.auth.currentUser?.id;
+    final id = log['id'].toString();
+    if (uid == null || log['employee_id'] != uid || _deleting.contains(id))
+      return;
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Log Time Entry for Task'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<Map<String, dynamic>>(
-                    value: selectedTask,
-                    decoration: const InputDecoration(
-                      labelText: 'Select Task *',
-                    ),
-                    items: _tasks
-                        .map(
-                          (t) => DropdownMenuItem(
-                            value: t,
-                            child: Text(t['title'] ?? 'Task'),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setDialogState(() => selectedTask = v),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: hoursController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Hours'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: minsController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Minutes',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: noteController,
-                    maxLines: 2,
-                    decoration: const InputDecoration(
-                      labelText: 'Work Note / Description',
-                    ),
-                  ),
-                ],
-              ),
+      builder: (context) => AlertDialog(
+        title: const Text('Delete time entry?'),
+        content: Text(
+          'Remove ${formatTaskTime((log['logged_seconds'] as num).toInt())} from this task’s logged time? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _deleting.add(id);
+    });
+    try {
+      final removed = await db
+          .from('task_work_logs')
+          .delete()
+          .eq('id', id)
+          .eq('employee_id', uid)
+          .select('id');
+      if (removed.isEmpty) {
+        throw StateError('Entry was not deleted. Check your permissions.');
+      }
+      final tracker = TaskTracker.instance;
+      tracker.timelogs.value = tracker.timelogs.value
+          .where((row) => row['id'].toString() != id)
+          .toList();
+      if (!mounted) return;
+      _refreshLogs();
+      AppToast.of(context)
+          .showSnackBar(const SnackBar(content: Text('Time entry deleted')));
+    } catch (e) {
+      if (mounted) {
+        AppToast.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not delete entry: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deleting.remove(id);
+        });
+      }
+    }
+  }
+
+  String _clock(int seconds) =>
+      '${(seconds ~/ 3600).toString().padLeft(2, '0')}:${(seconds ~/ 60 % 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
+
+  Future<void> _save() async {
+    final tracker = TaskTracker.instance;
+    if (_saving || tracker.activeTask.value?['id'] != widget.task['id']) return;
+    setState(() => _saving = true);
+    try {
+      await tracker.stopAndLogTimer(_note.text.trim());
+      if (!mounted) return;
+      _note.clear();
+      _refreshLogs();
+    } catch (e) {
+      if (mounted) {
+        AppToast.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Could not save time log: $e. Your elapsed time is retained.',
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (selectedTask == null) return;
-                final h = int.tryParse(hoursController.text.trim()) ?? 0;
-                final m = int.tryParse(minsController.text.trim()) ?? 0;
-                final totalSecs = (h * 3600) + (m * 60);
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
-                if (totalSecs <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Please enter valid hours or minutes.'),
-                    ),
-                  );
-                  return;
-                }
-
-                TaskTracker.instance.addTimelog({
-                  'id': DateTime.now().millisecondsSinceEpoch.toString(),
-                  'task_id': selectedTask!['id'],
-                  'task_title': selectedTask!['title'] ?? 'Task',
-                  'logged_seconds': totalSecs,
-                  'logged_hours_fmt':
-                      '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}',
-                  'note': noteController.text.trim(),
-                  'date': DateTime.now().toIso8601String().split('T')[0],
-                  'created_at': DateTime.now().toIso8601String(),
-                });
-
-                Navigator.pop(dialogContext);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('✅ Time logged successfully!'),
-                    backgroundColor: Colors.green,
+  @override
+  Widget build(BuildContext context) {
+    final tracker = TaskTracker.instance;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 16,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'Task timer & work logs',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                if (widget.onManualEntry != null)
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add Time Entry'),
+                    onPressed: () async {
+                      await widget.onManualEntry!();
+                      if (mounted) _refreshLogs();
+                    },
                   ),
+              ],
+            ),
+            if (widget.canTrack)
+              ListenableBuilder(
+                listenable: Listenable.merge([
+                  tracker.activeTask,
+                  tracker.activeSeconds,
+                  tracker.isTimerRunning,
+                ]),
+                builder: (context, _) {
+                  final selected =
+                      tracker.activeTask.value?['id'] == widget.task['id'];
+                  final running = selected && tracker.isTimerRunning.value;
+                  final seconds = selected ? tracker.activeSeconds.value : 0;
+                  final otherUnsaved =
+                      !selected && tracker.activeSeconds.value > 0;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 12),
+                      Text(
+                        _clock(seconds),
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
+                      if (otherUnsaved)
+                        const Text(
+                          'Save the timer on the other task before starting this one.',
+                        ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _note,
+                        enabled: !_saving,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'Work details (optional)',
+                          hintText: 'What did you work on?',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: _saving || otherUnsaved
+                                ? null
+                                : () {
+                                    if (running) {
+                                      tracker.pauseTimer();
+                                    } else {
+                                      tracker.startTimer(widget.task);
+                                    }
+                                  },
+                            icon: Icon(
+                              running ? Icons.pause : Icons.play_arrow,
+                            ),
+                            label: Text(
+                              running
+                                  ? 'Pause Timer'
+                                  : seconds > 0
+                                  ? 'Resume Timer'
+                                  : 'Start Timer',
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _saving || seconds == 0 ? null : _save,
+                            icon: const Icon(Icons.save_outlined),
+                            label: Text(
+                              _saving ? 'Saving…' : 'Stop & Save Log',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            const Divider(height: 24),
+            FutureBuilder<List<Map<String, dynamic>>>(
+              future: _logs,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return TextButton(
+                    onPressed: _refreshLogs,
+                    child: const Text('Could not load time logs. Retry'),
+                  );
+                }
+                if (!snapshot.hasData) return const LinearProgressIndicator();
+                final logs = snapshot.data!;
+                final total = logs.fold<int>(
+                  0,
+                  (sum, row) => sum + (row['logged_seconds'] as num).toInt(),
                 );
-                setState(() {});
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          'Logged time',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Chip(
+                          avatar: const Icon(Icons.timer_outlined, size: 18),
+                          label: Text(_clock(total)),
+                        ),
+                        Text(
+                          '${logs.length} ${logs.length == 1 ? 'entry' : 'entries'}',
+                        ),
+                      ],
+                    ),
+                    if (logs.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Text('No time logged for this task yet.'),
+                      ),
+                    for (final log in logs)
+                      TaskWorkLogEntry(
+                        log: log,
+                        deleting: _deleting.contains(log['id'].toString()),
+                        onDelete:
+                            log['employee_id'] ==
+                                Supabase.instance.client.auth.currentUser?.id
+                            ? () => _deleteLog(log)
+                            : null,
+                      ),
+                  ],
+                );
               },
-              child: const Text('Save Timelog'),
             ),
           ],
         ),

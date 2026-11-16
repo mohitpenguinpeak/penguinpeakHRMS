@@ -31,24 +31,6 @@ class HrModule {
 
   static const all = [
     HrModule(
-      'onboarding',
-      'Onboarding',
-      Icons.person_add_alt,
-      'Joining checklists, document collection and buddy assignments.',
-      [
-        HrField('joining_date', 'Joining date', date: true),
-        HrField('buddy', 'Buddy / contact'),
-      ],
-      hrCreates: true,
-      attachment: true,
-      checklist: [
-        'Personal details verified',
-        'Joining documents collected',
-        'Equipment received',
-        'Orientation completed',
-      ],
-    ),
-    HrModule(
       'payslip',
       'Payslips & Salary',
       Icons.receipt_long,
@@ -58,29 +40,6 @@ class HrModule {
         HrField('basic', 'Basic salary', number: true),
         HrField('allowances', 'Allowances', number: true),
         HrField('deductions', 'Deductions', number: true),
-      ],
-      hrCreates: true,
-      attachment: true,
-    ),
-    HrModule(
-      'ticket',
-      'HR Helpdesk',
-      Icons.support_agent,
-      'Raise HR or IT tickets and follow resolution updates.',
-      [
-        HrField('category', 'Category (HR / IT / Payroll)'),
-        HrField('priority', 'Priority (Low / Medium / High)'),
-      ],
-      attachment: true,
-    ),
-    HrModule(
-      'document',
-      'Document Centre',
-      Icons.folder_copy_outlined,
-      'Publish employee letters or company policies and record acknowledgements.',
-      [
-        HrField('category', 'Category (Policy / Offer letter / Other)'),
-        HrField('version', 'Document version'),
       ],
       hrCreates: true,
       attachment: true,

@@ -1,3 +1,5 @@
+import '../../../shared/widgets/app_toast.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -95,7 +97,7 @@ class _SessionGateState extends State<SessionGate> with WidgetsBindingObserver {
       await _controller.signOut();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('Could not clear this session. Please retry.'),
           ),

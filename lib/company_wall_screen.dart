@@ -1,3 +1,5 @@
+import 'shared/widgets/app_toast.dart';
+
 import 'package:flutter/material.dart';
 
 import 'shared/widgets/adaptive_layout.dart';
@@ -176,7 +178,7 @@ class _CompanyWallScreenState extends State<CompanyWallScreen> {
               onPressed: () async {
                 if (titleController.text.trim().isEmpty ||
                     contentController.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  AppToast.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Title and content are required.'),
                     ),
@@ -194,13 +196,13 @@ class _CompanyWallScreenState extends State<CompanyWallScreen> {
                   if (!mounted) return;
                   Navigator.pop(dialogContext);
                   _loadData();
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  AppToast.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Post published to Company Wall!'),
                     ),
                   );
                 } catch (e) {
-                  ScaffoldMessenger.of(context)
+                  AppToast.of(context)
                       .showSnackBar(SnackBar(content: Text('Error: $e')));
                 }
               },
@@ -245,7 +247,7 @@ class _CompanyWallScreenState extends State<CompanyWallScreen> {
       }
       _loadData();
     } catch (e) {
-      ScaffoldMessenger.of(context)
+      AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Error reacting: $e')));
     }
   }
@@ -263,7 +265,7 @@ class _CompanyWallScreenState extends State<CompanyWallScreen> {
       });
       _loadData();
     } catch (e) {
-      ScaffoldMessenger.of(context)
+      AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Error adding comment: $e')));
     }
   }

@@ -59,13 +59,21 @@ class LeaveBalanceSummary extends StatelessWidget {
                           '${row['leave_type']}',
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
-                        Text('${_format(allocated - used)} days remaining'),
                         Text(
-                          '${_format(used)} used / ${_format(allocated)} allocated',
+                          row['is_unlimited'] == true
+                              ? 'Unlimited'
+                              : '${_format(allocated - used)} days remaining',
+                        ),
+                        Text(
+                          row['is_unlimited'] == true
+                              ? '${_format(used)} used · No allocation limit'
+                              : '${_format(used)} used / ${_format(allocated)} allocated',
                         ),
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
-                          value: allocated > 0
+                          value: row['is_unlimited'] == true
+                              ? 1
+                              : allocated > 0
                               ? ((allocated - used) / allocated)
                                     .clamp(0, 1)
                                     .toDouble()

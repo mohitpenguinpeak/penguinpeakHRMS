@@ -1,3 +1,5 @@
+import 'shared/widgets/app_toast.dart';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -90,8 +92,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         .trim();
                     final senderName = _employeeName(senderId);
 
-                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    AppToast.of(context).hideCurrentSnackBar();
+                    AppToast.of(context).showSnackBar(
                       SnackBar(
                         behavior: SnackBarBehavior.floating,
                         backgroundColor: isUrgentMsg
@@ -206,7 +208,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (conversation != null) {
           await _loadMessages(conversation);
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
+          AppToast.of(context).showSnackBar(
             const SnackBar(
               content: Text('This conversation is no longer available.'),
             ),
@@ -237,7 +239,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages = List<Map<String, dynamic>>.from(res);
       });
     } catch (e) {
-      ScaffoldMessenger.of(context)
+      AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Error loading messages: $e')));
     }
   }
@@ -270,7 +272,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final created = _conversations.firstWhere((c) => c['id'] == convId);
       _loadMessages(created);
     } catch (e) {
-      ScaffoldMessenger.of(context)
+      AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Error starting chat: $e')));
     }
   }
@@ -297,7 +299,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
 
       if (_isUrgent && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('Urgent message sent.'),
             backgroundColor: Colors.red,
@@ -315,7 +317,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _loadMessages(_activeConversation!);
       _loadData();
     } catch (e) {
-      ScaffoldMessenger.of(context)
+      AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Error sending message: $e')));
     }
   }

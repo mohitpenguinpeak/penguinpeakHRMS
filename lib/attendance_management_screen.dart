@@ -1,3 +1,5 @@
+import 'shared/widgets/app_toast.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -318,7 +320,7 @@ class _AttendanceManagementScreenState
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('Successfully checked in!'),
           backgroundColor: Colors.green,
@@ -327,7 +329,7 @@ class _AttendanceManagementScreenState
       await _loadData(showLoading: false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Check-in failed: $e'),
           backgroundColor: Colors.red,
@@ -445,7 +447,7 @@ class _AttendanceManagementScreenState
           .eq('id', existing['id']);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('Successfully checked out!'),
           backgroundColor: Colors.green,
@@ -454,7 +456,7 @@ class _AttendanceManagementScreenState
       await _loadData(showLoading: false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Check-out failed: $e'),
           backgroundColor: Colors.red,
@@ -526,7 +528,7 @@ class _AttendanceManagementScreenState
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('Break started. Active task preserved.'),
           backgroundColor: Colors.orange,
@@ -535,7 +537,7 @@ class _AttendanceManagementScreenState
       await _loadData(showLoading: false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to start break: $e'),
           backgroundColor: Colors.red,
@@ -573,7 +575,7 @@ class _AttendanceManagementScreenState
           .eq('id', activeBreak['id']);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('Break ended.'),
           backgroundColor: Colors.green,
@@ -610,7 +612,7 @@ class _AttendanceManagementScreenState
                       .update({'status': 'in_progress'})
                       .eq('id', preBreakTask['id']);
                   Navigator.pop(dialogContext);
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  AppToast.of(context).showSnackBar(
                     const SnackBar(content: Text('Resumed task!')),
                   );
                 },
@@ -622,7 +624,7 @@ class _AttendanceManagementScreenState
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to end break: $e'),
           backgroundColor: Colors.red,
@@ -832,14 +834,14 @@ class _AttendanceManagementScreenState
                       : hasIncompleteNewEntry
                       ? 'New punch pairs need both an in and out time.'
                       : 'Punch out must be later than punch in.';
-                  ScaffoldMessenger.of(context)
+                  AppToast.of(context)
                       .showSnackBar(SnackBar(content: Text(message)));
                   return;
                 }
                 if (!entries.any(
                   (entry) => entry['in'] != null || entry['out'] != null,
                 )) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  AppToast.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Add at least one punch time.'),
                     ),
@@ -890,7 +892,7 @@ class _AttendanceManagementScreenState
                   });
                   if (!mounted) return;
                   Navigator.pop(dialogContext, true);
-                  ScaffoldMessenger.of(this.context).showSnackBar(
+                  AppToast.of(this.context).showSnackBar(
                     const SnackBar(
                       content: Text('Correction request submitted.'),
                       backgroundColor: Colors.green,
@@ -899,7 +901,7 @@ class _AttendanceManagementScreenState
                   await _loadData(showLoading: false);
                 } catch (e) {
                   if (dialogContext.mounted)
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    AppToast.of(dialogContext).showSnackBar(
                       SnackBar(content: Text('Failed to submit request: $e')),
                     );
                 }
@@ -1110,7 +1112,7 @@ class _AttendanceManagementScreenState
           .eq('id', request['id']);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text(
             approve
@@ -1123,7 +1125,7 @@ class _AttendanceManagementScreenState
       _loadData();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Error processing correction: $e'),
           backgroundColor: Colors.red,
@@ -1483,7 +1485,7 @@ class _AttendanceManagementScreenState
 
                 if (!mounted) return;
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
+                AppToast.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('✅ Attendance policy updated successfully!'),
                     backgroundColor: Colors.green,
@@ -1492,7 +1494,7 @@ class _AttendanceManagementScreenState
                 await _loadData(showLoading: false);
               } catch (e) {
                 if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
+                AppToast.of(context).showSnackBar(
                   SnackBar(content: Text('Failed to update policy: $e')),
                 );
               }
@@ -1853,13 +1855,13 @@ class _AttendanceManagementScreenState
                     if (rec != null) {
                       _showDayDetailDialog(curr, rec);
                     } else if (leaveType != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      AppToast.of(context).showSnackBar(
                         SnackBar(
                           content: Text('On Leave: $leaveType on $dateStr'),
                         ),
                       );
                     } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      AppToast.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
                             'No attendance record for $dateStr ($statusText)',

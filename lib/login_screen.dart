@@ -1,3 +1,5 @@
+import 'shared/widgets/app_toast.dart';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -129,7 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
           _customErrorMessage = errText;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           SnackBar(
             content: Text(errText),
             backgroundColor: Colors.orange.shade900,
@@ -142,7 +144,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _mascotState = PenguinState.error;
         _customErrorMessage = e.message;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text(e.message),
           backgroundColor: Colors.red.shade900,
@@ -154,7 +156,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _mascotState = PenguinState.error;
         _customErrorMessage = 'Something went wrong. Please retry!';
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('Error: $e'),
           backgroundColor: Colors.red.shade900,

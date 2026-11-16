@@ -22,6 +22,9 @@ void main() {
     for (final screen in [
       'expense',
       'shift',
+      'onboarding',
+      'ticket',
+      'document',
       'swap',
       'asset',
       'performance',
@@ -37,7 +40,7 @@ void main() {
     () {
       expect(
         NotificationDestination.fromMap({
-          'destination': 'document',
+          'destination': 'payslip',
           'target_id': '../../secret',
         })?.recordId,
         isNull,

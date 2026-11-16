@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'shared/widgets/adaptive_layout.dart';
+import 'shared/widgets/app_toast.dart';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'features/leave/domain/leave_request.dart';
+import 'features/leave/presentation/leave_day_selector.dart';
+import 'features/leave/presentation/employee_leave_balances.dart';
 import 'features/leave/data/leave_repository.dart';
 
 class LeaveManagementScreen extends StatefulWidget {
@@ -117,6 +120,8 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
     String leaveType = types.first;
     DateTime? startDate;
     DateTime? endDate;
+    bool halfDay = false;
+    String? half;
     final reasonController = TextEditingController();
     bool submitting = false;
 
@@ -143,6 +148,18 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                     },
                   ),
                   const SizedBox(height: 12),
+                  LeaveDaySelector(
+                    halfDay: halfDay,
+                    half: half,
+                    onModeChanged: (value) => setDialogState(() {
+                      halfDay = value;
+                      if (halfDay) endDate = startDate;
+                    }),
+                    onHalfChanged: (value) => setDialogState(() {
+                      half = value;
+                    }),
+                  ),
+                  const SizedBox(height: 12),
                   _dateButton(
                     label: startDate == null
                         ? 'Select start date'
@@ -159,38 +176,42 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                       if (picked != null)
                         setDialogState(() {
                           startDate = picked;
+                          if (halfDay) endDate = picked;
                           if (endDate != null && endDate!.isBefore(picked))
                             endDate = picked;
                         });
                     },
                   ),
                   const SizedBox(height: 8),
-                  _dateButton(
-                    label: endDate == null
-                        ? 'Select end date'
-                        : 'To: ${_dateText(endDate!)}',
-                    onPressed: () async {
-                      final now = DateTime.now();
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate:
-                            endDate ??
-                            startDate ??
-                            DateTime(now.year, now.month, now.day),
-                        firstDate: startDate ?? DateTime(now.year - 1),
-                        lastDate: DateTime(now.year + 5),
-                      );
-                      if (picked != null)
-                        setDialogState(() => endDate = picked);
-                    },
-                  ),
+                  if (!halfDay)
+                    _dateButton(
+                      label: endDate == null
+                          ? 'Select end date'
+                          : 'To: ${_dateText(endDate!)}',
+                      onPressed: () async {
+                        final now = DateTime.now();
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate:
+                              endDate ??
+                              startDate ??
+                              DateTime(now.year, now.month, now.day),
+                          firstDate: startDate ?? DateTime(now.year - 1),
+                          lastDate: DateTime(now.year + 5),
+                        );
+                        if (picked != null)
+                          setDialogState(() => endDate = picked);
+                      },
+                    ),
                   if (startDate != null && endDate != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          '${endDate!.difference(startDate!).inDays + 1} calendar day(s)',
+                          halfDay
+                              ? '0.5 day'
+                              : '${endDate!.difference(startDate!).inDays + 1} calendar day(s)',
                         ),
                       ),
                     ),
@@ -230,20 +251,23 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                         _toast('Please select both leave dates');
                         return;
                       }
+                      if (halfDay && half == null) {
+                        _toast('Please select First Half or Second Half');
+                        return;
+                      }
                       if (reasonController.text.trim().isEmpty) {
                         _toast('Please enter a reason');
                         return;
                       }
                       setDialogState(() => submitting = true);
                       try {
-                        final days = endDate!.difference(startDate!).inDays + 1;
                         await _db.rpc(
-                          'apply_for_leave',
+                          'apply_for_leave_duration',
                           params: {
                             'p_leave_type': leaveType,
                             'p_start_date': _dateText(startDate!),
                             'p_end_date': _dateText(endDate!),
-                            'p_days': days,
+                            'p_day_portion': halfDay ? half : 'full_day',
                             'p_reason': reasonController.text.trim(),
                           },
                         );
@@ -468,7 +492,11 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
     return result;
   }
 
-  Future<void> _manageBalance() async {
+  Future<void> _manageBalance({
+    String? initialEmployeeId,
+    String? initialLeaveType,
+  }) async {
+    if (!_isHr) return;
     final eligible = _profiles
         .where((p) => ['employee', 'hr'].contains(p['role']))
         .toList();
@@ -476,10 +504,28 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
       _toast('No approved Employee or HR profiles found');
       return;
     }
-    String employeeId = eligible.first['id'].toString();
-    String leaveType = 'Annual';
-    final leaveTypeController = TextEditingController(text: 'Annual');
+    String employeeId =
+        eligible.any((p) => p['id'].toString() == initialEmployeeId)
+        ? initialEmployeeId!
+        : eligible.first['id'].toString();
+    String leaveType = initialLeaveType ?? 'Annual';
+    final leaveTypeController = TextEditingController(text: leaveType);
     final daysController = TextEditingController();
+    bool unlimited = false;
+    void fillAllocation() {
+      final existing = _balances
+          .where(
+            (row) =>
+                row['employee_id']?.toString() == employeeId &&
+                row['leave_type']?.toString().toLowerCase() ==
+                    leaveType.toLowerCase(),
+          )
+          .firstOrNull;
+      daysController.text = existing?['allocated_days']?.toString() ?? '';
+      unlimited = existing?['is_unlimited'] == true;
+    }
+
+    fillAllocation();
     bool saving = false;
 
     await showDialog<void>(
@@ -507,21 +553,42 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                       )
                       .toList(),
                   onChanged: (v) {
-                    if (v != null) setDialogState(() => employeeId = v);
+                    if (v != null)
+                      setDialogState(() {
+                        employeeId = v;
+                        fillAllocation();
+                      });
                   },
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: leaveTypeController,
-                  onChanged: (v) => leaveType = v.trim(),
+                  onChanged: (v) => setDialogState(() {
+                    leaveType = v.trim();
+                    fillAllocation();
+                  }),
                   decoration: const InputDecoration(
                     labelText: 'Leave type',
                     hintText: 'Annual, Sick, Casual...',
                   ),
                 ),
                 const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Unlimited allocation'),
+                  subtitle: const Text(
+                    'Track used days without a fixed day limit.',
+                  ),
+                  value: unlimited,
+                  onChanged: saving
+                      ? null
+                      : (value) => setDialogState(() {
+                          unlimited = value;
+                        }),
+                ),
                 TextField(
                   controller: daysController,
+                  enabled: !unlimited && !saving,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -548,8 +615,8 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                   : () async {
                       final days = num.tryParse(daysController.text.trim());
                       if (leaveType.trim().isEmpty ||
-                          days == null ||
-                          days < 0) {
+                          (!unlimited &&
+                              (days == null || !days.isFinite || days < 0))) {
                         _toast(
                           'Enter a leave type and valid non-negative day total',
                         );
@@ -558,11 +625,12 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                       setDialogState(() => saving = true);
                       try {
                         await _db.rpc(
-                          'set_employee_leave_balance',
+                          'set_employee_leave_allocation',
                           params: {
                             'p_employee_id': employeeId,
                             'p_leave_type': leaveType.trim(),
-                            'p_allocated_days': days,
+                            'p_allocated_days': unlimited ? null : days,
+                            'p_is_unlimited': unlimited,
                           },
                         );
                         if (dialogContext.mounted) Navigator.pop(dialogContext);
@@ -591,8 +659,16 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    final kind = message.startsWith('Could not')
+        ? ToastKind.error
+        : message.contains('saved') ||
+              message.contains('submitted') ||
+              message.contains('approved') ||
+              message.contains('cancelled') ||
+              message.contains('rejected')
+        ? ToastKind.success
+        : ToastKind.info;
+    AppToast.show(context, message, kind: kind);
   }
 
   @override
@@ -778,56 +854,18 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
   Widget _balanceCards(
     List<Map<String, dynamic>> balances, {
     bool showEmployee = false,
-  }) {
-    return AdaptiveCards(
-      minWidth: 240,
-      maxColumns: 4,
-      children: balances.map((b) {
-        final allocated = (b['allocated_days'] as num?)?.toDouble() ?? 0;
-        final used = (b['used_days'] as num?)?.toDouble() ?? 0;
-        final remaining = allocated - used;
-        return SizedBox(
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (showEmployee) ...[
-                    Text(
-                      _employeeName(b['employee_id']),
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 4),
-                  ],
-                  Text(
-                    b['leave_type'].toString(),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Remaining',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  Text(
-                    '${remaining.toStringAsFixed(remaining % 1 == 0 ? 0 : 1)} days',
-                    style: Theme.of(context).textTheme.headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Used ${used.toStringAsFixed(used % 1 == 0 ? 0 : 1)} / ${allocated.toStringAsFixed(allocated % 1 == 0 ? 0 : 1)} days',
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
+  }) => EmployeeLeaveBalances(
+    balances: balances,
+    employeeName: _employeeName,
+    showEmployee: showEmployee,
+    onManageEmployee: _isHr && showEmployee
+        ? (id) => _manageBalance(initialEmployeeId: id)
+        : null,
+    onManageType: _isHr && showEmployee
+        ? (id, type) =>
+              _manageBalance(initialEmployeeId: id, initialLeaveType: type)
+        : null,
+  );
 
   Widget _requestCard(
     Map<String, dynamic> r, {
@@ -885,6 +923,7 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
               '${r['start_date']} → ${r['end_date']}  •  ${r['days']} day(s)',
             ),
             const SizedBox(height: 4),
+            Text(LeaveRequest(r).durationLabel),
             Text('Reason: ${r['reason']}'),
             if (r['approved_days'] != null)
               Text(

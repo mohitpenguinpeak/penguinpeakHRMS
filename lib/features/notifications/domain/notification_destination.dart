@@ -5,10 +5,7 @@ class NotificationDestination {
   final String? recordId;
   static const labels = {
     'leave': 'Leave',
-    'onboarding': 'Onboarding',
     'payslip': 'Payslips & Salary',
-    'ticket': 'HR Helpdesk',
-    'document': 'Document Centre',
     'tasks': 'Tasks',
     'chat': 'Chat',
     'attendance_adjustments': 'Attendance Adjustments',

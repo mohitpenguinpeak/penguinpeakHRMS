@@ -1,3 +1,4 @@
+import 'shared/widgets/app_toast.dart';
 import 'features/notifications/domain/notification_destination.dart';
 import 'features/hr/domain/hr_module.dart';
 import 'features/hr/presentation/hr_workspace.dart';
@@ -8,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'features/leave/domain/leave_request.dart';
+import 'features/people/presentation/remove_user_dialog.dart';
 
 import 'app_theme.dart';
 import 'core/theme/design_system.dart';
@@ -24,6 +26,7 @@ import 'features/auth/presentation/session_gate.dart';
 import 'features/auth/data/session_repository.dart';
 import 'notification_bell.dart';
 import 'task_management_screen.dart';
+import 'features/tasks/presentation/header_task_timer.dart';
 import 'team_leave_calendar_screen.dart';
 
 const _profileDetailFields = <String, String>{
@@ -180,19 +183,13 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
       final myProfile = await _supabase
           .from('profiles')
-          .select(
-            'id, full_name, approval_status, role, created_at, '
-            'department, designation, phone, joining_date, manager_id, profile_details',
-          )
+          .select()
           .eq('id', user.id)
           .maybeSingle();
 
       final result = await _supabase
           .from('profiles')
-          .select(
-            'id, full_name, approval_status, role, created_at, '
-            'department, designation, phone, joining_date, manager_id, profile_details',
-          )
+          .select()
           .order('created_at', ascending: false);
 
       final attRes = await _supabase
@@ -213,7 +210,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
       final myBalancesRes = await _supabase
           .from('leave_balances')
-          .select('leave_type, allocated_days, used_days')
+          .select()
           .eq('employee_id', user.id);
 
       final wallRes = await _supabase
@@ -227,7 +224,9 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       setState(() {
         if (myProfile != null)
           _myProfile = Map<String, dynamic>.from(myProfile);
-        _profiles = List<Map<String, dynamic>>.from(result);
+        _profiles = List<Map<String, dynamic>>.from(result)
+            .where((row) => row['removed_at'] == null)
+            .toList();
         _myTodayAttendance = attRes;
         _onLeaveToday = List<Map<String, dynamic>>.from(leavesRes)
             .where((row) => LeaveRequest(row).covers(DateTime.now()))
@@ -264,10 +263,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
       final myProfile = await _supabase
           .from('profiles')
-          .select(
-            'id, full_name, approval_status, role, created_at, '
-            'department, designation, phone, joining_date, manager_id, profile_details',
-          )
+          .select()
           .eq('id', user.id)
           .maybeSingle();
 
@@ -279,12 +275,11 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
       final result = await _supabase
           .from('profiles')
-          .select(
-            'id, full_name, approval_status, role, created_at, '
-            'department, designation, phone, joining_date, manager_id, profile_details',
-          )
+          .select()
           .order('created_at', ascending: false);
-      final profiles = List<Map<String, dynamic>>.from(result);
+      final profiles = List<Map<String, dynamic>>.from(result)
+          .where((row) => row['removed_at'] == null)
+          .toList();
 
       final todayStr = DateTime.now().toIso8601String().split('T')[0];
 
@@ -309,7 +304,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       // Load authoritative allocations and usage for the current employee.
       final myBalancesRes = await _supabase
           .from('leave_balances')
-          .select('leave_type, allocated_days, used_days')
+          .select()
           .eq('employee_id', user.id);
 
       // Load announcements from company_wall_posts
@@ -374,8 +369,121 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context)
+      AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Logout failed: $e')));
+    }
+  }
+
+  Future<void> _showPreviouslyRemovedUsers() async {
+    if (widget.role != 'hr') return;
+    try {
+      final removed = await _supabase
+          .from('profiles')
+          .select('id, full_name')
+          .not('removed_at', 'is', null);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Previously removed users'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'These accounts still have login records. Delete permanently to free their email addresses.',
+                  ),
+                  if (removed.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('No previously removed users.'),
+                    ),
+                  for (final profile in removed)
+                    ListTile(
+                      title: Text('${profile['full_name'] ?? 'User'}'),
+                      trailing: IconButton(
+                        tooltip: 'Delete permanently',
+                        icon: const Icon(Icons.delete_forever_outlined),
+                        onPressed: () {
+                          Navigator.pop(dialogContext);
+                          _removeUser(profile);
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted)
+        AppToast.show(
+          context,
+          'Could not load removed users: $e',
+          kind: ToastKind.error,
+        );
+    }
+  }
+
+  final Set<String> _removingUsers = {};
+
+  Future<void> _removeUser(Map<String, dynamic> profile) async {
+    final id = profile['id']?.toString();
+    if (widget.role != 'hr' ||
+        id == null ||
+        id == _supabase.auth.currentUser?.id ||
+        _removingUsers.contains(id))
+      return;
+    if (!await confirmUserRemoval(
+          context,
+          '${profile['full_name'] ?? 'this user'}',
+        ) ||
+        !mounted)
+      return;
+    setState(() {
+      _removingUsers.add(id);
+    });
+    try {
+      final response = await _supabase.functions.invoke(
+        'delete-user',
+        body: {'user_id': id},
+      );
+      if (response.status != 200 ||
+          response.data is! Map ||
+          response.data['deleted'] != true) {
+        throw StateError('Permanent deletion did not complete. Please retry.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _profiles.removeWhere((row) => row['id']?.toString() == id);
+      });
+      AppToast.show(
+        context,
+        'User permanently deleted. Their email can be registered again.',
+        kind: ToastKind.success,
+      );
+      await _loadData();
+    } catch (e) {
+      if (mounted)
+        AppToast.show(
+          context,
+          'Could not remove user: $e',
+          kind: ToastKind.error,
+        );
+    } finally {
+      if (mounted)
+        setState(() {
+          _removingUsers.remove(id);
+        });
     }
   }
 
@@ -387,7 +495,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(
           content: Text('🎉 Account $status successfully!'),
           backgroundColor: status == 'approved' ? Colors.green : Colors.orange,
@@ -396,7 +504,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       await _loadData();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(content: Text('Could not update account status: $e')),
       );
     }
@@ -453,7 +561,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             .single();
         setState(() => _myTodayAttendance = newRec);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('🟢 Successfully checked in!'),
             backgroundColor: Colors.green,
@@ -484,7 +592,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             .single();
         setState(() => _myTodayAttendance = updated);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('🟢 Successfully checked in again!'),
             backgroundColor: Colors.green,
@@ -539,7 +647,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             .single();
         setState(() => _myTodayAttendance = updated);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('🔴 Successfully checked out!'),
             backgroundColor: Colors.orange,
@@ -549,7 +657,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       await _loadDataSilently();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      AppToast.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Attendance action failed: $e')));
     }
@@ -575,7 +683,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
       _wallPostController.clear();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('🎉 Post published to Company Wall!'),
           backgroundColor: Colors.green,
@@ -584,7 +692,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       _loadData();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
+      AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Error publishing post: $e')));
     }
   }
@@ -800,6 +908,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               ],
             ),
             actions: [
+              const HeaderTaskTimer(),
               NotificationBell(
                 role: widget.role,
                 onNavigate: _openNotificationDestination,
@@ -2030,7 +2139,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                           });
 
                           if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          AppToast.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
                                 '🎉 $hName published to all employees!',
@@ -2047,7 +2156,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                           });
 
                           if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          AppToast.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
                                 'Added locally. Run Supabase SQL to sync across devices: $e',
@@ -2505,7 +2614,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
       if (!mounted) return false;
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('✅ Employee details updated successfully!'),
           backgroundColor: Colors.green,
@@ -2517,7 +2626,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     } catch (e) {
       if (!mounted) return false;
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      AppToast.of(context).showSnackBar(
         SnackBar(content: Text('Could not save employee details: $e')),
       );
       return false;
@@ -2786,6 +2895,12 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 ),
               ],
             ),
+            if (widget.role == 'hr')
+              TextButton.icon(
+                onPressed: _showPreviouslyRemovedUsers,
+                icon: const Icon(Icons.person_off_outlined),
+                label: const Text('Previously removed'),
+              ),
           ],
         ),
         const SizedBox(height: 20),
@@ -2992,6 +3107,22 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                               tooltip: 'Edit details',
                             ),
                           ],
+                          if (widget.role == 'hr' &&
+                              profile['id']?.toString() !=
+                                  _supabase.auth.currentUser?.id)
+                            IconButton(
+                              tooltip: 'Delete user permanently',
+                              onPressed:
+                                  _removingUsers.contains(
+                                    profile['id'].toString(),
+                                  )
+                                  ? null
+                                  : () => _removeUser(profile),
+                              icon: Icon(
+                                Icons.person_remove_outlined,
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
                         ],
                       ),
                     ],

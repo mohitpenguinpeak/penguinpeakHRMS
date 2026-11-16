@@ -3,6 +3,11 @@ class LeaveRequest {
   const LeaveRequest(this.row);
   final Map<String, dynamic> row;
 
+  String get durationLabel => switch (row['day_portion']) {
+    'first_half' => 'Half Day · First Half',
+    'second_half' => 'Half Day · Second Half',
+    _ => 'Full Day',
+  };
   bool get isCancelled => row['cancelled_at'] != null;
   bool get isRejected =>
       row['manager_status'] == 'rejected' || row['hr_status'] == 'rejected';

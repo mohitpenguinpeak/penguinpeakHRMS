@@ -1,10 +1,11 @@
+import '../../../shared/widgets/app_toast.dart';
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../data/hr_repository.dart';
 import '../domain/hr_module.dart';
@@ -95,7 +96,7 @@ class _HrWorkspaceState extends State<HrWorkspace> {
   }
 
   Future<void> create() async {
-    final created = await showDialog<bool>(
+    final created = await showDialog<String>(
       context: context,
       builder: (_) => _CreateRecord(
         module: widget.module,
@@ -104,7 +105,13 @@ class _HrWorkspaceState extends State<HrWorkspace> {
         hr: hr,
       ),
     );
-    if (created == true && mounted) await load();
+    if (created != null && mounted) {
+      await load();
+      if (mounted && widget.module.id == 'payslip') {
+        final record = await repo.record('payslip', created);
+        if (mounted && record != null) await open(record);
+      }
+    }
   }
 
   Future<void> open(Map<String, dynamic> row) async {
@@ -152,13 +159,19 @@ class _HrWorkspaceState extends State<HrWorkspace> {
                 FilledButton.icon(
                   onPressed: loading ? null : create,
                   icon: const Icon(Icons.add),
-                  label: const Text('New record'),
+                  label: Text(
+                    module.id == 'payslip' ? 'Generate payslip' : 'New record',
+                  ),
                 ),
             ],
           ),
         ),
         const SizedBox(height: 8),
-        Text(module.description),
+        Text(
+          module.id == 'payslip'
+              ? 'Generate salary slips and save PDFs to your device.'
+              : module.description,
+        ),
         const SizedBox(height: 16),
         LayoutBuilder(
           builder: (context, box) => Wrap(
@@ -213,6 +226,41 @@ class _HrWorkspaceState extends State<HrWorkspace> {
                   const Text('Could not load this module.'),
                   SelectableText(error!),
                   TextButton(onPressed: load, child: const Text('Retry')),
+                ],
+              ),
+            ),
+          )
+        else if (filtered.isEmpty && module.id == 'payslip' && rows.isEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.receipt_long_outlined,
+                    size: 44,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Generate a salary slip',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    hr
+                        ? 'Choose an employee and month, then download the PDF. Salary details and PDFs are not saved to Supabase.'
+                        : 'Your payslips will appear here after HR publishes them.',
+                    textAlign: TextAlign.center,
+                  ),
+                  if (hr) ...[
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: create,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Create salary slip'),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -314,7 +362,33 @@ class _CreateRecordState extends State<_CreateRecord> {
       error = null;
     });
     try {
-      await widget.repo.create(
+      if (widget.module.id == 'payslip') {
+        final employeeName =
+            widget.employees
+                .where((row) => row['id'].toString() == employee)
+                .firstOrNull?['full_name']
+                ?.toString() ??
+            'Employee';
+        final saved = await _savePayslipPdf({
+          for (final entry in controllers.entries)
+            entry.key: entry.value.text.trim(),
+        }, employeeName);
+        if (!mounted) return;
+        if (saved != null) {
+          AppToast.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Salary slip PDF saved successfully.'),
+            ),
+          );
+          Navigator.pop(context);
+        } else {
+          setState(() {
+            busy = false;
+          });
+        }
+        return;
+      }
+      final id = await widget.repo.create(
         widget.module.id,
         employee,
         title.text.trim(),
@@ -322,7 +396,7 @@ class _CreateRecordState extends State<_CreateRecord> {
         {for (final e in controllers.entries) e.key: e.value.text.trim()},
         company,
       );
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) Navigator.pop(context, id);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -337,7 +411,11 @@ class _CreateRecordState extends State<_CreateRecord> {
   Widget build(BuildContext context) => PopScope(
     canPop: !busy,
     child: AlertDialog(
-      title: Text('New ${widget.module.label} record'),
+      title: Text(
+        widget.module.id == 'payslip'
+            ? 'Generate payslip'
+            : 'New ${widget.module.label} record',
+      ),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -430,7 +508,7 @@ class _CreateRecordState extends State<_CreateRecord> {
                         ? null
                         : (v) => setState(() => company = v!),
                   ),
-                if (widget.module.attachment)
+                if (widget.module.attachment && widget.module.id != 'payslip')
                   const Text(
                     'Save the record, then attach PDFs or images from its details.',
                   ),
@@ -453,7 +531,13 @@ class _CreateRecordState extends State<_CreateRecord> {
         ),
         FilledButton(
           onPressed: busy ? null : save,
-          child: Text(busy ? 'Saving…' : 'Save'),
+          child: Text(
+            busy
+                ? 'Saving…'
+                : widget.module.id == 'payslip'
+                ? 'Download PDF'
+                : 'Save',
+          ),
         ),
       ],
     ),
@@ -509,81 +593,13 @@ class _RecordDetailState extends State<_RecordDetail> {
     refresh();
   }
 
-  Future<void> _generateAndPrintPayslipPdf(Map<String, dynamic> data) async {
-    final pdf = pw.Document();
-    final basic = double.tryParse(data['basic'].toString()) ?? 0;
-    final allowances = double.tryParse(data['allowances'].toString()) ?? 0;
-    final deductions = double.tryParse(data['deductions'].toString()) ?? 0;
-    final netSalary = basic + allowances - deductions;
-
-    pdf.addPage(
-      pw.Page(
-        build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Header(
-                level: 0,
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      'PENGUINPEAK TECHNOLOGIES',
-                      style: pw.TextStyle(
-                        fontSize: 18,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.Text(
-                      'SALARY SLIP',
-                      style: const pw.TextStyle(
-                        fontSize: 14,
-                        color: PdfColors.grey700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'Employee Name: ${widget.employeeName}',
-                style: const pw.TextStyle(fontSize: 14),
-              ),
-              pw.Text(
-                'Salary Period: ${data['period'] ?? 'N/A'}',
-                style: const pw.TextStyle(fontSize: 14),
-              ),
-              pw.SizedBox(height: 20),
-              pw.Table.fromTextArray(
-                headers: ['Earnings / Deductions', 'Amount (INR)'],
-                data: [
-                  ['Basic Salary', basic.toStringAsFixed(2)],
-                  ['Allowances', allowances.toStringAsFixed(2)],
-                  ['Deductions', deductions.toStringAsFixed(2)],
-                  ['Net Salary Payable', netSalary.toStringAsFixed(2)],
-                ],
-              ),
-              pw.SizedBox(height: 40),
-              pw.Align(
-                alignment: pw.Alignment.centerRight,
-                child: pw.Text(
-                  'Authorized Signature',
-                  style: const pw.TextStyle(
-                    fontSize: 12,
-                    color: PdfColors.grey600,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-      name: 'Payslip_${data['period'] ?? 'Statement'}.pdf',
-    );
+  Future<void> _downloadPayslipPdf(Map<String, dynamic> data) async {
+    final saved = await _savePayslipPdf(data, widget.employeeName);
+    if (saved != null && mounted) {
+      AppToast.of(context).showSnackBar(
+        const SnackBar(content: Text('Salary slip PDF saved successfully.')),
+      );
+    }
   }
 
   @override
@@ -701,70 +717,65 @@ class _RecordDetailState extends State<_RecordDetail> {
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: Text(
-                          'Payslip Summary • ${data['period'] ?? 'Period'}',
-                        ),
-                        content: SizedBox(
-                          width: 425,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Employee: ${widget.employeeName}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
+                  onPressed: busy
+                      ? null
+                      : () {
+                          showDialog(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: Text(
+                                'Payslip Summary • ${data['period'] ?? 'Period'}',
+                              ),
+                              content: SizedBox(
+                                width: 425,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Employee: ${widget.employeeName}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const Divider(height: 20),
+                                    _keyVal(
+                                      'Basic Salary',
+                                      'INR ${data['basic'] ?? '0'}',
+                                    ),
+                                    _keyVal(
+                                      'Allowances',
+                                      'INR ${data['allowances'] ?? '0'}',
+                                    ),
+                                    _keyVal(
+                                      'Deductions',
+                                      'INR ${data['deductions'] ?? '0'}',
+                                    ),
+                                    const Divider(height: 20),
+                                    _keyVal(
+                                      'Net Salary',
+                                      'INR ${((double.tryParse(data['basic'].toString()) ?? 0) + (double.tryParse(data['allowances'].toString()) ?? 0) - (double.tryParse(data['deductions'].toString()) ?? 0)).toStringAsFixed(2)}',
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const Divider(height: 20),
-                              _keyVal(
-                                'Basic Salary',
-                                'INR ${data['basic'] ?? '0'}',
-                              ),
-                              _keyVal(
-                                'Allowances',
-                                'INR ${data['allowances'] ?? '0'}',
-                              ),
-                              _keyVal(
-                                'Deductions',
-                                'INR ${data['deductions'] ?? '0'}',
-                              ),
-                              const Divider(height: 20),
-                              _keyVal(
-                                'Net Salary',
-                                'INR ${((double.tryParse(data['basic'].toString()) ?? 0) + (double.tryParse(data['allowances'].toString()) ?? 0) - (double.tryParse(data['deductions'].toString()) ?? 0)).toStringAsFixed(2)}',
-                              ),
-                            ],
-                          ),
-                        ),
-                        actions: [
-                          FilledButton.icon(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    '📄 Payslip PDF generated & downloaded successfully!',
-                                  ),
-                                  backgroundColor: Colors.green,
+                              actions: [
+                                FilledButton.icon(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    run(() => _downloadPayslipPdf(data));
+                                  },
+                                  icon: const Icon(Icons.download, size: 16),
+                                  label: const Text('Download PDF'),
                                 ),
-                              );
-                            },
-                            icon: const Icon(Icons.download, size: 16),
-                            label: const Text('Download PDF'),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text('Close'),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Close'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
                   icon: const Icon(Icons.picture_as_pdf, size: 16),
                   label: const Text('Download / Generate Payslip PDF'),
                 ),
@@ -919,4 +930,91 @@ Widget _keyVal(String k, String v) {
       ],
     ),
   );
+}
+
+Future<Uri?> _savePayslipPdf(
+  Map<String, dynamic> data,
+  String employeeName,
+) async {
+  final pdf = pw.Document();
+  final basic = double.tryParse(data['basic'].toString()) ?? 0;
+  final allowances = double.tryParse(data['allowances'].toString()) ?? 0;
+  final deductions = double.tryParse(data['deductions'].toString()) ?? 0;
+  final netSalary = basic + allowances - deductions;
+
+  pdf.addPage(
+    pw.Page(
+      build: (pw.Context context) {
+        return pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Header(
+              level: 0,
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    'PENGUINPEAK TECHNOLOGIES',
+                    style: pw.TextStyle(
+                      fontSize: 18,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  pw.Text(
+                    'SALARY SLIP',
+                    style: const pw.TextStyle(
+                      fontSize: 14,
+                      color: PdfColors.grey700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 20),
+            pw.Text(
+              'Employee Name: ${employeeName}',
+              style: const pw.TextStyle(fontSize: 14),
+            ),
+            pw.Text(
+              'Salary Period: ${data['period'] ?? 'N/A'}',
+              style: const pw.TextStyle(fontSize: 14),
+            ),
+            pw.SizedBox(height: 20),
+            pw.Table.fromTextArray(
+              headers: ['Earnings / Deductions', 'Amount (INR)'],
+              data: [
+                ['Basic Salary', basic.toStringAsFixed(2)],
+                ['Allowances', allowances.toStringAsFixed(2)],
+                ['Deductions', deductions.toStringAsFixed(2)],
+                ['Net Salary Payable', netSalary.toStringAsFixed(2)],
+              ],
+            ),
+            pw.SizedBox(height: 40),
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                'Authorized Signature',
+                style: const pw.TextStyle(
+                  fontSize: 12,
+                  color: PdfColors.grey600,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+
+  final period = '${data['period'] ?? 'Statement'}'.replaceAll(
+    RegExp(r'[^a-zA-Z0-9_-]'),
+    '_',
+  );
+  final saved = await FilePicker.saveFile(
+    bytes: await pdf.save(),
+    fileName: 'Payslip_$period.pdf',
+    mimeType: 'application/pdf',
+    dialogTitle: 'Save salary slip',
+  );
+  return saved;
 }

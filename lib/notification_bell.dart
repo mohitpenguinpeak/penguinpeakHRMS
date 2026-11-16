@@ -1,3 +1,5 @@
+import 'shared/widgets/app_toast.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -80,7 +82,7 @@ class _NotificationBellState extends State<NotificationBell>
             }),
           );
         }
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           SnackBar(
             content: Text(message.notification?.title ?? 'New notification'),
             action: SnackBarAction(label: 'View', onPressed: _open),
@@ -116,7 +118,7 @@ class _NotificationBellState extends State<NotificationBell>
       await _activate(item);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text(
               'Could not open notification. Please retry from the inbox.',
@@ -275,7 +277,7 @@ class _NotificationBellState extends State<NotificationBell>
                     final enabled = await PushNotificationService.instance
                         .register();
                     if (!mounted) return;
-                    ScaffoldMessenger.of(this.context).showSnackBar(
+                    AppToast.of(this.context).showSnackBar(
                       SnackBar(
                         content: Text(
                           enabled
@@ -298,7 +300,7 @@ class _NotificationBellState extends State<NotificationBell>
                       final enabled = await DesktopNotificationService.instance
                           .enableAndTest();
                       if (!mounted) return;
-                      ScaffoldMessenger.of(this.context).showSnackBar(
+                      AppToast.of(this.context).showSnackBar(
                         SnackBar(
                           content: Text(
                             enabled
@@ -309,7 +311,7 @@ class _NotificationBellState extends State<NotificationBell>
                       );
                     } catch (_) {
                       if (!mounted) return;
-                      ScaffoldMessenger.of(this.context).showSnackBar(
+                      AppToast.of(this.context).showSnackBar(
                         const SnackBar(
                           content: Text(
                             'Could not display a test alert. Check device notification settings.',
@@ -350,7 +352,7 @@ class _NotificationBellState extends State<NotificationBell>
                                 await _activate(item);
                               } catch (_) {
                                 if (!mounted) return;
-                                ScaffoldMessenger.of(this.context).showSnackBar(
+                                AppToast.of(this.context).showSnackBar(
                                   const SnackBar(
                                     content: Text(
                                       'Could not open notification. Please retry.',

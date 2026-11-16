@@ -13,7 +13,9 @@ class MemoryHr extends HrRepository {
   @override
   String get userId => 'employee';
   String? failure;
+  bool empty = false;
   String? lastAction;
+  int createCalls = 0;
   Map<String, dynamic> get row => {
     'id': 'record',
     'module': module.id,
@@ -36,7 +38,7 @@ class MemoryHr extends HrRepository {
   @override
   Future<List<Map<String, dynamic>>> records(String module) async {
     if (failure != null) throw Exception(failure);
-    return [row];
+    return empty ? [] : [row];
   }
 
   @override
@@ -55,7 +57,11 @@ class MemoryHr extends HrRepository {
     String description,
     Map<String, dynamic> data,
     bool companyWide,
-  ) async => 'created';
+  ) async {
+    createCalls++;
+    return 'created';
+  }
+
   @override
   Future<void> update(
     Map<String, dynamic> row,
@@ -106,6 +112,23 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('empty payslips workspace offers creation directly', (
+    tester,
+  ) async {
+    final module = HrModule.all.firstWhere((m) => m.id == 'payslip');
+    final repo = MemoryHr(module)..empty = true;
+    await host(
+      tester,
+      HrWorkspace(module: module, role: 'hr', repository: repo),
+      1000,
+    );
+    expect(find.text('Generate a salary slip'), findsOneWidget);
+    await tester.tap(find.text('Create salary slip'));
+    await tester.pumpAndSettle();
+    expect(find.text('Salary month (YYYY-MM)'), findsOneWidget);
+    expect(find.text('Basic salary'), findsOneWidget);
+  });
+
   for (final width in [320.0, 390.0, 1600.0]) {
     for (final module in HrModule.all) {
       testWidgets('${module.label} list, details and form fit $width', (
@@ -124,11 +147,16 @@ void main() {
         expect(tester.takeException(), isNull);
         await tester.tap(find.text('Close'));
         await tester.pumpAndSettle();
-        await tester.ensureVisible(find.text('New record'));
-        await tester.tap(find.text('New record'));
+        final createLabel = module.id == 'payslip'
+            ? 'Generate payslip'
+            : 'New record';
+        await tester.ensureVisible(find.text(createLabel));
+        await tester.tap(find.text(createLabel));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        await tester.tap(find.text('Save'));
+        await tester.tap(
+          find.text(module.id == 'payslip' ? 'Download PDF' : 'Save'),
+        );
         await tester.pumpAndSettle();
         expect(find.text('Enter a title'), findsOneWidget);
         tester.view.viewInsets = const FakeViewPadding(bottom: 300);
@@ -197,25 +225,10 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
-  test('only the four selected services are registered', () {
-    expect(HrModule.all.map((m) => m.id), [
-      'onboarding',
-      'payslip',
-      'ticket',
-      'document',
-    ]);
+  test('only payslips remain registered', () {
+    expect(HrModule.all.map((module) => module.id), ['payslip']);
   });
-  test('ticket resolution and publication retain role restrictions', () {
-    final ticket = HrModule.all.firstWhere((m) => m.id == 'ticket');
-    expect(ticket.actions('open', hr: false, owner: true), isEmpty);
-    expect(
-      ticket.actions('open', hr: true, owner: false),
-      contains('resolved'),
-    );
-    expect(
-      ticket.actions('resolved', hr: false, owner: true),
-      containsAll(['closed', 'open']),
-    );
+  test('payslip publication retains role restrictions', () {
     final payslip = HrModule.all.firstWhere((m) => m.id == 'payslip');
     expect(payslip.actions('draft', hr: false, owner: true), isEmpty);
     expect(payslip.actions('draft', hr: true, owner: false), ['published']);

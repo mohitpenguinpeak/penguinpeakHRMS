@@ -19,7 +19,9 @@ class TaskKanbanBoard extends StatelessWidget {
     'pending_acceptance': 'Awaiting acceptance',
     'todo': 'To do',
     'in_progress': 'In progress',
-    'blocked': 'Blocked',
+    'pending': 'Pending',
+    'on_hold': 'On Hold',
+    'in_review': 'In Review',
     'completed': 'Completed',
     'declined': 'Declined',
   };
@@ -31,7 +33,8 @@ class TaskKanbanBoard extends StatelessWidget {
       for (final key in columns.keys) key: [],
     };
     for (final task in tasks) {
-      final status = task['status']?.toString() ?? 'todo';
+      final rawStatus = task['status']?.toString() ?? 'todo';
+      final status = rawStatus == 'blocked' ? 'on_hold' : rawStatus;
       (groups[status] ??= []).add(task);
     }
     groups.removeWhere(

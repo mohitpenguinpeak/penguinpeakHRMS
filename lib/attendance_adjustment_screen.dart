@@ -1,3 +1,5 @@
+import 'shared/widgets/app_toast.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -306,7 +308,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
               onPressed: () async {
                 final mins = int.tryParse(durationController.text.trim()) ?? 0;
                 if (mins <= 0 || mins > 60) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  AppToast.of(context).showSnackBar(
                     const SnackBar(
                       content: Text(
                         'Duration must be between 1 and 60 minutes.',
@@ -316,7 +318,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                   return;
                 }
                 if (reasonController.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  AppToast.of(context).showSnackBar(
                     const SnackBar(content: Text('Reason is required.')),
                   );
                   return;
@@ -332,7 +334,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                   if (!mounted) return;
                   Navigator.pop(dialogContext);
                   _loadData(showLoading: false);
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  AppToast.of(context).showSnackBar(
                     const SnackBar(
                       content: Text(
                         'Adjustment request submitted successfully.',
@@ -340,7 +342,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                     ),
                   );
                 } catch (e) {
-                  ScaffoldMessenger.of(context)
+                  AppToast.of(context)
                       .showSnackBar(SnackBar(content: Text('Error: $e')));
                 }
               },
@@ -402,10 +404,10 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                 if (!mounted) return;
                 Navigator.pop(dialogContext);
                 _loadData(showLoading: false);
-                ScaffoldMessenger.of(context)
+                AppToast.of(context)
                     .showSnackBar(SnackBar(content: Text('Request $status')));
               } catch (e) {
-                ScaffoldMessenger.of(context)
+                AppToast.of(context)
                     .showSnackBar(SnackBar(content: Text('Error: $e')));
               }
             },
