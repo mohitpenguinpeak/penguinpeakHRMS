@@ -44,6 +44,8 @@ dependencies:
   printing: ^5.13.2
 
 dev_dependencies:
+  http: ^1.6.0
+  web_socket_channel: ^3.0.3
   flutter_test:
     sdk: flutter
 

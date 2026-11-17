@@ -2,48 +2,24 @@ import 'package:flutter/material.dart';
 
 class AppColors {
   static Color background(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF090A0F) // Deep graphite charcoal
-      : const Color(0xFFF4F5F7); // Pristine light SaaS workspace background
-
+      Theme.of(context).scaffoldBackgroundColor;
   static Color surface(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF13151A)
-      : Colors.white;
-
+      Theme.of(context).colorScheme.surface;
   static Color surfaceElevated(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF1A1D24)
-      : const Color(0xFFFFFFFF);
-
+      Theme.of(context).colorScheme.surfaceContainerHigh;
   static Color surfaceMuted(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF1E222B)
-      : const Color(0xFFEDF2F7);
-
+      Theme.of(context).colorScheme.surfaceContainerLow;
   static Color textPrimary(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFFF1F3F5)
-      : const Color(0xFF0F172A);
-
+      Theme.of(context).colorScheme.onSurface;
   static Color textSecondary(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF9CA3AF)
-      : const Color(0xFF475569);
-
+      Theme.of(context).colorScheme.onSurfaceVariant;
   static Color textTertiary(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF6B7280)
-      : const Color(0xFF94A3B8);
-
+      Theme.of(context).colorScheme.onSurfaceVariant;
   static Color border(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF262B35)
-      : const Color(0xFFE2E8F0);
+      Theme.of(context).colorScheme.outlineVariant;
 
-  // Professional SaaS Accent: Electric Indigo / Slate Violet
-  static const Color accent = Color(0xFF6366F1); // Indigo
-  static const Color accentSoft = Color(0xFFEEF2FF);
+  static const Color accent = Color(0xff357c79);
+  static const Color accentSoft = Color(0xffdeefec);
 
   static const Color success = Color(0xFF10B981); // Emerald
   static const Color warning = Color(0xFFF59E0B); // Amber
@@ -109,20 +85,20 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final radius = borderRadius ?? BorderRadius.circular(AppRadius.lg);
+    final radius = borderRadius ?? BorderRadius.circular(22);
 
     return Container(
       decoration: BoxDecoration(
-        color:
-            backgroundColor ??
-            (isDark ? const Color(0xFF13151A) : Colors.white),
-        borderRadius: radius,
-        border: Border.all(
-          color: isDark ? const Color(0xFF262B35) : const Color(0xFFE2E8F0),
-          width: 1,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            backgroundColor ?? AppColors.surfaceElevated(context),
+            backgroundColor ?? AppColors.surface(context),
+          ],
         ),
+        borderRadius: radius,
+        border: Border.all(color: AppColors.border(context), width: .7),
         boxShadow: AppShadows.subtle(context),
       ),
       child: Material(
@@ -172,13 +148,15 @@ class StatusBadge extends StatelessWidget {
             Icon(icon, size: 12, color: color),
             const SizedBox(width: 4),
           ],
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
             ),
           ),
         ],

@@ -103,12 +103,15 @@ class AdaptiveRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      if (MediaQuery.sizeOf(context).width >= 850 ||
-          constraints.maxWidth >= breakpoint) {
+      final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+      if (constraints.maxWidth >= breakpoint * textScale.clamp(1, 2)) {
         return Row(
           mainAxisAlignment: mainAxisAlignment,
           crossAxisAlignment: crossAxisAlignment,
-          children: children,
+          children: [
+            for (final child in children)
+              if (child is Text) Flexible(child: child) else child,
+          ],
         );
       }
       final items = children

@@ -1,7 +1,12 @@
+import 'features/dashboard/presentation/calendar_event_sheet.dart';
+import 'package:penguinpeak_hrms/shared/widgets/company_calendar.dart';
+import 'shared/widgets/alpine_landscape.dart';
+import 'features/attendance/domain/attendance_summary.dart';
 import 'shared/widgets/app_toast.dart';
 import 'features/notifications/domain/notification_destination.dart';
 import 'features/hr/domain/hr_module.dart';
 import 'features/hr/presentation/hr_workspace.dart';
+import 'features/performance/presentation/performance_workspace.dart';
 
 import 'dart:async';
 
@@ -68,6 +73,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
   String? _holidayLoadError;
 
   bool _loading = true;
+  bool _clockBusy = false;
+  bool _publishingPost = false;
   String? _error;
   int _selectedIndex = 0;
   String? _notificationRecordId;
@@ -132,6 +139,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         Icons.edit_calendar_outlined,
       ),
       const _DashboardItem('Tasks', Icons.task_alt_outlined),
+      const _DashboardItem('Resource Availability', Icons.people_alt_outlined),
+      const _DashboardItem('Performance', Icons.insights_outlined),
       const _DashboardItem('Chat', Icons.chat_bubble_outline),
       const _DashboardItem('Company Wall', Icons.feed_outlined),
       const _DashboardItem('Team Calendar', Icons.calendar_month_outlined),
@@ -167,12 +176,37 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             schema: 'public',
             callback: (payload) {
               if (mounted) {
-                _loadDataSilently();
+                if (payload.table == 'holidays') {
+                  _refreshCalendar();
+                } else {
+                  _loadDataSilently();
+                }
               }
             },
           )
           .subscribe();
     } catch (_) {}
+  }
+
+  Future<List<Map<String, dynamic>>> _readCalendar() async {
+    final loadedHolidays = <Map<String,dynamic>>[];
+    for (var offset = 0; ; offset += 500) {
+      final rows = await _supabase.from('holidays')
+          .select('id, name, holiday_date, type').order('holiday_date').order('id')
+          .range(offset, offset + 499);
+      loadedHolidays.addAll(rows);
+      if (rows.length < 500) break;
+    }
+    return loadedHolidays;
+  }
+
+  Future<void> _refreshCalendar() async {
+    try {
+      final rows = await _readCalendar();
+      if (mounted) setState(() { _holidays = rows; _holidayLoadError = null; });
+    } catch (_) {
+      if (mounted) setState(() => _holidayLoadError = 'Could not load company calendar. Please refresh.');
+    }
   }
 
   Future<void> _loadDataSilently() async {
@@ -194,7 +228,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
       final attRes = await _supabase
           .from('attendance_records')
-          .select('*')
+          .select('*, attendance_breaks(*)')
           .eq('employee_id', user.id)
           .eq('attendance_date', todayStr)
           .maybeSingle();
@@ -286,7 +320,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       // Load today's attendance for current user
       final attRes = await _supabase
           .from('attendance_records')
-          .select('*')
+          .select('*, attendance_breaks(*)')
           .eq('employee_id', user.id)
           .eq('attendance_date', todayStr)
           .maybeSingle();
@@ -315,17 +349,11 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
           .order('created_at', ascending: false)
           .limit(5);
 
-      // Only real upcoming records, bounded for a 50-person internal app.
+      // All workspace calendars share these saved overrides.
       List<Map<String, dynamic>> loadedHolidays = [];
       String? holidayError;
       try {
-        final rows = await _supabase
-            .from('holidays')
-            .select('id, name, holiday_date, type')
-            .gte('holiday_date', todayStr)
-            .order('holiday_date')
-            .limit(20);
-        loadedHolidays = List<Map<String, dynamic>>.from(rows);
+        loadedHolidays = await _readCalendar();
       } catch (_) {
         holidayError = 'Could not load company holidays. Please retry.';
       }
@@ -511,15 +539,17 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
   }
 
   Future<void> _handleClockInOut() async {
+    if (_clockBusy) return;
     final user = _supabase.auth.currentUser;
     if (user == null) return;
     final todayStr = DateTime.now().toIso8601String().split('T')[0];
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
+    setState(() => _clockBusy = true);
     try {
       final existing = await _supabase
           .from('attendance_records')
-          .select('*')
+          .select('*, attendance_breaks(*)')
           .eq('employee_id', user.id)
           .eq('attendance_date', todayStr)
           .maybeSingle();
@@ -527,19 +557,14 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       if (existing == null) {
         // First check in today
         final nowLocal = DateTime.now();
-        final startTime = DateTime(
-          nowLocal.year,
-          nowLocal.month,
-          nowLocal.day,
-          10,
-          30,
-        );
-        int lateMinutes = 0;
-        String status = 'Present';
-        if (nowLocal.isAfter(startTime)) {
-          lateMinutes = nowLocal.difference(startTime).inMinutes;
-          if (lateMinutes > 15) status = 'Late';
-        }
+        final settings =
+            await _supabase
+                .from('company_attendance_settings')
+                .select()
+                .maybeSingle() ??
+            <String, dynamic>{};
+        final lateMinutes = attendanceLateMinutes(nowLocal, settings);
+        final status = lateMinutes > 0 ? 'Late' : 'Present';
 
         final newRec = await _supabase
             .from('attendance_records')
@@ -559,8 +584,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             })
             .select()
             .single();
-        setState(() => _myTodayAttendance = newRec);
         if (!mounted) return;
+        setState(() => _myTodayAttendance = newRec);
         AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('🟢 Successfully checked in!'),
@@ -569,11 +594,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         );
       } else if (existing['check_out'] != null) {
         // Already checked out before, start a new session (Check In Again)
-        final sessions = List<Map<String, dynamic>>.from(
-          (existing['work_sessions'] as List? ?? []).map(
-            (s) => Map<String, dynamic>.from(s as Map),
-          ),
-        );
+        final sessions = attendanceSessions(existing);
         sessions.add({
           'check_in': nowIso,
           'check_out': null,
@@ -590,8 +611,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             .eq('id', existing['id'])
             .select()
             .single();
-        setState(() => _myTodayAttendance = updated);
         if (!mounted) return;
+        setState(() => _myTodayAttendance = updated);
         AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('🟢 Successfully checked in again!'),
@@ -600,53 +621,68 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         );
       } else {
         // Currently checked in -> Check Out
-        final sessions = List<Map<String, dynamic>>.from(
-          (existing['work_sessions'] as List? ?? []).map(
-            (s) => Map<String, dynamic>.from(s as Map),
-          ),
-        );
-        if (sessions.isEmpty) {
-          sessions.add({
-            'check_in': existing['check_in'],
-            'check_out': null,
-            'work_duration_minutes': 0,
-          });
+        final breaks = (existing['attendance_breaks'] as List? ?? [])
+            .whereType<Map>();
+        if (breaks.any((row) => row['break_end'] == null)) {
+          throw StateError('Please end your active break before checking out.');
         }
+        final sessions = attendanceSessions(existing);
         final sessionIndex = sessions.lastIndexWhere(
-          (s) => s['check_out'] == null,
+          (session) => session['check_out'] == null,
         );
-        if (sessionIndex >= 0) {
-          final checkInTime = DateTime.parse(
-            sessions[sessionIndex]['check_in'].toString(),
-          );
-          final now = DateTime.now();
-          final grossMins = now.difference(checkInTime).inMinutes;
-          sessions[sessionIndex] = {
-            ...sessions[sessionIndex],
-            'check_out': nowIso,
-            'work_duration_minutes': grossMins.clamp(0, 1440),
-          };
+        if (sessionIndex < 0) throw StateError('No open work session found.');
+        final now = DateTime.now();
+        final start = DateTime.tryParse(
+          '${sessions[sessionIndex]['check_in']}',
+        );
+        if (start == null || now.isBefore(start)) {
+          throw StateError('Check-out cannot be earlier than check-in.');
         }
-
+        sessions[sessionIndex]['check_out'] = nowIso;
+        for (var i = 0; i < sessions.length; i++) {
+          sessions[i]['work_duration_minutes'] = attendanceSessionMinutes(
+            existing,
+            sessions[i],
+            i,
+            now,
+          );
+        }
         final totalWorkMinutes = sessions.fold<int>(
           0,
-          (sum, session) =>
-              sum + ((session['work_duration_minutes'] as num?)?.toInt() ?? 0),
+          (sum, session) => sum + (session['work_duration_minutes'] as int),
         );
-
+        final settings =
+            await _supabase
+                .from('company_attendance_settings')
+                .select()
+                .maybeSingle() ??
+            <String, dynamic>{};
+        final threshold =
+            double.tryParse('${settings['half_day_hours'] ?? 4}') ?? 4;
+        final status = existing['status'] == 'Late'
+            ? 'Late'
+            : totalWorkMinutes < threshold * 60
+            ? 'Half Day'
+            : 'Present';
         final updated = await _supabase
             .from('attendance_records')
             .update({
               'check_out': nowIso,
               'work_sessions': sessions,
               'work_duration_minutes': totalWorkMinutes,
+              'status': status,
+              'break_duration_minutes': breaks.fold<int>(
+                0,
+                (sum, row) =>
+                    sum + ((row['duration_minutes'] as num?)?.toInt() ?? 0),
+              ),
               'updated_at': nowIso,
             })
             .eq('id', existing['id'])
             .select()
             .single();
-        setState(() => _myTodayAttendance = updated);
         if (!mounted) return;
+        setState(() => _myTodayAttendance = updated);
         AppToast.of(context).showSnackBar(
           const SnackBar(
             content: Text('🔴 Successfully checked out!'),
@@ -660,14 +696,18 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       AppToast.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Attendance action failed: $e')));
+    } finally {
+      if (mounted) setState(() => _clockBusy = false);
     }
   }
 
   Future<void> _submitWallPost() async {
+    if (_publishingPost) return;
     final text = _wallPostController.text.trim();
     final user = _supabase.auth.currentUser;
     if (user == null || text.isEmpty) return;
 
+    setState(() => _publishingPost = true);
     try {
       await _supabase.from('company_wall_posts').insert({
         'author_id': user.id,
@@ -677,12 +717,14 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             ? '👏 Praise'
             : 'Company Update',
         'content': text,
-        'category': _composerCategory,
+        'post_type': _composerCategory == 'post'
+            ? 'general'
+            : _composerCategory,
         'is_pinned': _composerCategory == 'announcement',
       });
 
-      _wallPostController.clear();
       if (!mounted) return;
+      if (_wallPostController.text.trim() == text) _wallPostController.clear();
       AppToast.of(context).showSnackBar(
         const SnackBar(
           content: Text('🎉 Post published to Company Wall!'),
@@ -694,6 +736,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       if (!mounted) return;
       AppToast.of(context)
           .showSnackBar(SnackBar(content: Text('Error publishing post: $e')));
+    } finally {
+      if (mounted) setState(() => _publishingPost = false);
     }
   }
 
@@ -888,7 +932,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 ? null
                 : Builder(
                     builder: (context) => IconButton(
-                      icon: const Icon(Icons.menu),
+                      tooltip: 'Open workspace menu',
+                      icon: const Icon(Icons.menu_rounded),
                       onPressed: () => Scaffold.of(context).openDrawer(),
                     ),
                   ),
@@ -908,24 +953,25 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               ],
             ),
             actions: [
-              const HeaderTaskTimer(),
+              HeaderTaskTimer(compact: !isDesktop),
               NotificationBell(
                 role: widget.role,
                 onNavigate: _openNotificationDestination,
               ),
-              IconButton(
-                tooltip: 'Switch theme',
-                onPressed: () {
-                  appThemeMode.value = appThemeMode.value == ThemeMode.dark
-                      ? ThemeMode.light
-                      : ThemeMode.dark;
-                },
-                icon: Icon(
-                  theme.brightness == Brightness.dark
-                      ? Icons.light_mode_outlined
-                      : Icons.dark_mode_outlined,
+              if (isDesktop)
+                IconButton(
+                  tooltip: 'Switch theme',
+                  onPressed: () {
+                    appThemeMode.value = appThemeMode.value == ThemeMode.dark
+                        ? ThemeMode.light
+                        : ThemeMode.dark;
+                  },
+                  icon: Icon(
+                    theme.brightness == Brightness.dark
+                        ? Icons.light_mode_outlined
+                        : Icons.dark_mode_outlined,
+                  ),
                 ),
-              ),
               if (isDesktop)
                 IconButton(
                   tooltip: 'Refresh data',
@@ -942,13 +988,18 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 PopupMenuButton<String>(
                   tooltip: 'Workspace actions',
                   onSelected: (action) {
-                    if (action == 'refresh') {
+                    if (action == 'theme') {
+                      appThemeMode.value = appThemeMode.value == ThemeMode.dark
+                          ? ThemeMode.light
+                          : ThemeMode.dark;
+                    } else if (action == 'refresh') {
                       _loadData();
                     } else {
                       _logout();
                     }
                   },
                   itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'theme', child: Text('Switch theme')),
                     PopupMenuItem(
                       value: 'refresh',
                       child: Text('Refresh data'),
@@ -959,11 +1010,51 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               const SizedBox(width: 8),
             ],
           ),
+          bottomNavigationBar: constraints.maxWidth < 600
+              ? SafeArea(
+                  top: false,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      border: Border(top: BorderSide(color: colors.outlineVariant, width: .5)),
+                    ),
+                    child: Row(
+                      children: [
+                        for (final item in _menuItems.where((item) =>
+                            const {'Overview', 'Attendance', 'Tasks', 'My Profile'}.contains(item.label)))
+                          Expanded(child: _DockItem(
+                            label: item.label,
+                            icon: item.icon,
+                            selected: item.label == _menuItems[_selectedIndex].label,
+                            onTap: () => _navigateToModule(item.label),
+                          )),
+                      ],
+                    ),
+                  ),
+                )
+              : null,
           body: Row(
             children: [
               if (isDesktop)
                 SizedBox(width: 245, child: _buildSidebar(isDrawer: false)),
-              Expanded(child: _buildPage(colors)),
+              Expanded(
+                child: TweenAnimationBuilder<double>(
+                  key: ValueKey(_selectedIndex),
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 240),
+                  curve: Curves.easeOutCubic,
+                  tween: Tween(begin: 0, end: 1),
+                  builder: (context, progress, page) => Opacity(
+                    opacity: progress,
+                    child: Transform.translate(
+                      offset: Offset(0, 8 * (1 - progress)),
+                      child: page,
+                    ),
+                  ),
+                  child: CompanyCalendar(entries: _holidays, available: _holidayLoadError == null, add: _canViewAllEmployees ? _manageHolidaysDialog : null, remove: _canViewAllEmployees ? _removeCalendarOverride : null, child: _buildPage(colors)),
+                ),
+              ),
             ],
           ),
         );
@@ -976,11 +1067,9 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     final colors = theme.colorScheme;
     final name = _myProfile?['full_name']?.toString() ?? 'User';
 
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        border: Border(right: BorderSide(color: colors.outlineVariant)),
-      ),
+    return Material(
+      color: colors.surfaceContainerLow,
+      shape: Border(right: BorderSide(color: colors.outlineVariant)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1010,17 +1099,6 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'WORKSPACE',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colors.onSurfaceVariant,
-                letterSpacing: 1.5,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1059,10 +1137,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                       child: ListTile(
                         selected: selected,
                         dense: true,
-                        selectedTileColor: colors.primary.withValues(
-                          alpha: 0.12,
-                        ),
-                        selectedColor: colors.primary,
+                        selectedTileColor: colors.secondaryContainer,
+                        selectedColor: colors.onSecondaryContainer,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -1079,12 +1155,42 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
           ),
           const Divider(),
           ListTile(
-            leading: CircleAvatar(
-              backgroundColor: AppThemes.orange,
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : 'U',
-                style: const TextStyle(color: Colors.black),
-              ),
+            leading: Stack(
+              alignment: Alignment.topLeft,
+              children: [
+                CircleAvatar(
+                  backgroundColor: AppThemes.orange,
+                  child: Text(
+                    name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                    style: const TextStyle(color: Colors.black),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color:
+                        _myTodayAttendance?['check_in'] != null &&
+                            _myTodayAttendance?['check_out'] == null
+                        ? Colors.green
+                        : Colors.grey,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _myTodayAttendance?['check_in'] != null &&
+                            _myTodayAttendance?['check_out'] == null
+                        ? 'IN'
+                        : 'OUT',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ),
             title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text(_roleLabel),
@@ -1137,7 +1243,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         key: PageStorageKey('workspace-$page'),
         padding: EdgeInsets.all(pagePadding),
         children: [
-          Padding(
+          if (page != 'Overview') Padding(
             padding: const EdgeInsets.only(bottom: 20),
             child: Wrap(
               spacing: 12,
@@ -1145,9 +1251,9 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 Text(
-                  'Workspace / $page',
-                  style: Theme.of(context).textTheme.labelLarge
-                      ?.copyWith(color: colors.onSurfaceVariant),
+                  page,
+                  style: Theme.of(context).textTheme.headlineMedium
+                      ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -1),
                 ),
                 Chip(
                   visualDensity: VisualDensity.compact,
@@ -1172,6 +1278,8 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 if (page == 'Leave') LeaveManagementScreen(role: widget.role),
                 if (page == 'Attendance')
                   AttendanceManagementScreen(role: widget.role),
+                if (page == 'Resource Availability')
+                  TaskManagementScreen(role: widget.role, availabilityOnly: true),
                 if (page == 'Tasks')
                   TaskManagementScreen(
                     key: ValueKey('task-notice-$_notificationOpenRevision'),
@@ -1179,6 +1287,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                     initialTaskId: _notificationRecordId,
                     onTargetConsumed: _consumeNotificationTarget,
                   ),
+                if (page == 'Performance') const PerformanceWorkspace(),
                 if (page == 'Chat')
                   ChatScreen(
                     key: ValueKey('chat-notice-$_notificationOpenRevision'),
@@ -1233,7 +1342,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Welcome Banner
-        _buildWelcomeBanner(name, colors),
+        _buildWelcomeBanner(name),
 
         const SizedBox(height: 20),
 
@@ -1289,9 +1398,9 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             children: [
               if (_canViewAllEmployees) _buildPendingApprovalsCard(),
               if (_canViewAllEmployees) const SizedBox(height: 16),
-              _buildQuickAccessCard(),
-              const SizedBox(height: 16),
               _buildAttendanceWidget(),
+              const SizedBox(height: 16),
+              _buildQuickAccessCard(),
               const SizedBox(height: 16),
               _buildOrgContextCard(),
               const SizedBox(height: 16),
@@ -1312,106 +1421,34 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     );
   }
 
-  Widget _buildWelcomeBanner(String name, ColorScheme colors) {
-    final dept = _myProfile?['department']?.toString() ?? 'PenguinPeak';
-    final desig = _myProfile?['designation']?.toString() ?? 'Team Member';
-    final todayFormatted =
-        '${_now.day}/${_now.month}/${_now.year} • ${DateTime.now().toLocal().toString().split(' ')[1].substring(0, 5)}';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: AppThemes.orange.withOpacity(0.35),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppThemes.orange.withOpacity(0.12),
-            blurRadius: 20,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
+  Widget _buildWelcomeBanner(String name) {
+    final material = MaterialLocalizations.of(context);
+    final greeting = _now.hour < 12 ? 'Good morning' : _now.hour < 18 ? 'Good afternoon' : 'Good evening';
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: AlpineLandscape(
+        child: LayoutBuilder(builder: (context, bounds) {
+          final wide = bounds.maxWidth >= 620;
+          return Padding(
+            padding: EdgeInsets.fromLTRB(wide ? 36 : 20, wide ? 32 : 22,
+                wide ? bounds.maxWidth * .32 : 20, wide ? 36 : 24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppThemes.orange.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppThemes.orange),
-                      ),
-                      child: Text(
-                        _roleLabel.toUpperCase(),
-                        style: const TextStyle(
-                          color: AppThemes.orange,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 10,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '• $desig ($dept)',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Welcome back, $name! 👋',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Here is your workplace overview & daily activities for $todayFormatted',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
+                Text(material.formatFullDate(_now),
+                    style: const TextStyle(color: Color(0xffc9e7ea), fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 18),
+                Text('$greeting, $name',
+                    style: TextStyle(color: Colors.white, fontSize: wide ? 38 : 28,
+                        height: 1.1, fontWeight: FontWeight.w700, letterSpacing: -1.2)),
+                const SizedBox(height: 10),
+                Text([_myProfile?['designation'] ?? _roleLabel, _myProfile?['department']]
+                    .whereType<String>().where((part) => part.isNotEmpty).join('  ·  '),
+                    style: const TextStyle(color: Color(0xffdeedf2), fontSize: 14)),
               ],
             ),
-          ),
-          if (MediaQuery.sizeOf(context).width >= 650)
-            CircleAvatar(
-              radius: 34,
-              backgroundColor: AppThemes.orange,
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : 'U',
-                style: const TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                ),
-              ),
-            ),
-        ],
+          );
+        }),
       ),
     );
   }
@@ -1427,40 +1464,31 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossCount = constraints.maxWidth >= 900 ? 4 : 2;
-        return GridView.count(
-          crossAxisCount: crossCount,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: 1.5,
+        return AdaptiveCards(
+          minWidth: 135 * MediaQuery.textScalerOf(context).scale(1).clamp(1, 2),
+          maxColumns: 4,
           children: [
             _kpiTile(
               'Total Employees',
-              '$totalEmployees Active',
-              '+4% this mo',
+              '$totalEmployees',
               Icons.groups,
               const Color(0xFF6366F1),
             ),
             _kpiTile(
               'Approved Roster',
-              '$approvedCount Verified',
-              '100% secure',
+              '$approvedCount',
               Icons.verified,
               const Color(0xFF10B981),
             ),
             _kpiTile(
               'Pending Approvals',
-              '$pendingCount Action Req',
-              pendingCount > 0 ? 'Review now' : 'All clear',
+              '$pendingCount',
               Icons.pending_actions,
               const Color(0xFFF59E0B),
             ),
             _kpiTile(
               'On Leave Today',
-              '${_onLeaveToday.length} Members',
-              'Team roster',
+              '${_onLeaveToday.length}',
               Icons.event_available,
               const Color(0xFFEC4899),
             ),
@@ -1473,7 +1501,6 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
   Widget _kpiTile(
     String title,
     String value,
-    String subtitle,
     IconData icon,
     Color color,
   ) {
@@ -1483,25 +1510,12 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              StatusBadge(label: subtitle, color: color),
-            ],
-          ),
-          const Spacer(),
+          Icon(icon, color: Color.lerp(color, Theme.of(context).colorScheme.onSurface, .22), size: 22),
+          const SizedBox(height: 16),
           Text(
             value,
             style: const TextStyle(
-              fontSize: 18,
+              fontSize: 32,
               fontWeight: FontWeight.bold,
               letterSpacing: -0.5,
             ),
@@ -1565,59 +1579,33 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Quick Access Shortcuts',
+              'Quick access',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 14),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 130,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                mainAxisExtent: MediaQuery.sizeOf(context).width < 600
-                    ? 112
-                    : null,
-                childAspectRatio: 1.1,
-              ),
-              itemCount: items.length,
-              itemBuilder: (context, idx) {
-                final item = items[idx];
-                return InkWell(
-                  onTap: () => _navigateToModule(item['module'] as String),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardColor,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Theme.of(context).dividerColor),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          item['icon'] as IconData,
-                          color: AppThemes.orange,
-                          size: 22,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          item['label'] as String,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+            AdaptiveCards(
+              minWidth: 132 * MediaQuery.textScalerOf(context).scale(1).clamp(1, 2),
+              maxColumns: 4,
+              children: [
+                for (final item in items)
+                  Material(
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => _navigateToModule(item['module'] as String),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                        child: Row(children: [
+                          Icon(item['icon'] as IconData, size: 19, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(item['label'] as String,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                        ]),
+                      ),
                     ),
                   ),
-                );
-              },
+              ],
             ),
           ],
         ),
@@ -1635,25 +1623,18 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     if (isCheckedIn) {
       final dt = DateTime.tryParse(todayRec['check_in'].toString())?.toLocal();
       if (dt != null) {
-        inTime =
-            '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} ${dt.hour >= 12 ? 'PM' : 'AM'}';
+        inTime = attendanceClockLabel(dt);
       }
     }
 
     final lateMins = ((todayRec?['late_minutes'] as num?)?.toInt() ?? 0);
-    final lateStr = lateMins > 0
+    final lateStr = !isCheckedIn
+        ? ''
+        : lateMins > 0
         ? ' • ⚠️ Late by ${lateMins ~/ 60}h ${lateMins % 60}m'
         : ' • 🟢 On Time';
 
-    int totalMinutesWorked = 0;
-    if (isCheckedIn) {
-      final start =
-          DateTime.tryParse(todayRec['check_in'].toString()) ?? DateTime.now();
-      final end = isCheckedOut
-          ? (DateTime.tryParse(todayRec['check_out'].toString()) ?? _now)
-          : _now;
-      totalMinutesWorked = end.difference(start).inMinutes.clamp(0, 1440);
-    }
+    final totalMinutesWorked = attendanceWorkMinutes(todayRec, _now);
 
     final workProgress = (totalMinutesWorked / 480.0).clamp(0.0, 1.0);
     final workHoursFormatted =
@@ -1752,8 +1733,10 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     const Text(
                       'Daily Shift Progress',
@@ -1794,7 +1777,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                           : Colors.green,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    onPressed: _handleClockInOut,
+                    onPressed: _clockBusy ? null : _handleClockInOut,
                     icon: Icon(
                       isCheckedIn ? Icons.logout : Icons.login,
                       size: 18,
@@ -2012,218 +1995,51 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     );
   }
 
-  Future<void> _manageHolidaysDialog() async {
-    final nameController = TextEditingController();
-    DateTime? selectedDate = DateTime.now().add(const Duration(days: 30));
-    String holidayType = 'National Holiday';
+  Future<bool> _removeCalendarOverride(Map<String,dynamic> entry) async {
+    if (!_canViewAllEmployees || entry['id'] == null) return false;
+    final confirmed = await showDialog<bool>(context: context, builder: (dialog) => AlertDialog(
+      title: const Text('Remove calendar override?'),
+      content: Text("${entry['name']} · ${entry['holiday_date']}"),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialog, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(dialog, true), child: const Text('Remove')),
+      ],
+    ));
+    if (confirmed != true || !mounted) return false;
+    try {
+      await _supabase.from('holidays').delete().eq('id', entry['id']).select('id').single();
+      if (mounted) setState(() => _holidays = _holidays.where((r) => r['id'] != entry['id']).toList());
+      return true;
+    } catch (error) {
+      if (mounted) AppToast.of(context).showSnackBar(SnackBar(content: Text('Could not remove calendar override: $error')));
+      return false;
+    }
+  }
 
-    await showDialog(
+  Future<void> _manageHolidaysDialog([DateTime? day]) async {
+    if (!_canViewAllEmployees) return;
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Manage Company Holidays'),
-          content: SizedBox(
-            width: 480,
-            height: 450,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Add New Holiday',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: AppThemes.orange,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Holiday Name *',
-                      hintText: 'e.g. Diwali, Independence Day',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          selectedDate == null
-                              ? 'No date selected'
-                              : 'Date: ${selectedDate!.toIso8601String().split('T')[0]}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      OutlinedButton(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: selectedDate ?? DateTime.now(),
-                            firstDate: DateTime(2020),
-                            lastDate: DateTime(2030),
-                          );
-                          if (picked != null) {
-                            setDialogState(() => selectedDate = picked);
-                          }
-                        },
-                        child: const Text('Select Date'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    value: holidayType,
-                    decoration: const InputDecoration(
-                      labelText: 'Holiday Category / Type',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'National Holiday',
-                        child: Text('National Holiday'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Festive Holiday',
-                        child: Text('Festive Holiday'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Optional / Floating',
-                        child: Text('Optional / Floating'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Regional Holiday',
-                        child: Text('Regional Holiday'),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setDialogState(() => holidayType = v);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppThemes.orange,
-                        foregroundColor: Colors.black,
-                      ),
-                      onPressed: () async {
-                        final hName = nameController.text.trim();
-                        if (hName.isEmpty || selectedDate == null) return;
-
-                        final newHoliday = {
-                          'name': hName,
-                          'holiday_date': selectedDate!.toIso8601String().split(
-                            'T',
-                          )[0],
-                          'type': holidayType,
-                        };
-
-                        try {
-                          final inserted = await _supabase
-                              .from('holidays')
-                              .insert(newHoliday)
-                              .select()
-                              .single();
-
-                          setState(() {
-                            _holidays.add(inserted);
-                          });
-                          setDialogState(() {
-                            nameController.clear();
-                          });
-
-                          if (!mounted) return;
-                          AppToast.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '🎉 $hName published to all employees!',
-                              ),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        } catch (e) {
-                          setState(() {
-                            _holidays.add(newHoliday);
-                          });
-                          setDialogState(() {
-                            nameController.clear();
-                          });
-
-                          if (!mounted) return;
-                          AppToast.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Added locally. Run Supabase SQL to sync across devices: $e',
-                              ),
-                              backgroundColor: Colors.orange.shade900,
-                              duration: const Duration(seconds: 5),
-                            ),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add Holiday'),
-                    ),
-                  ),
-                  const Divider(height: 28),
-                  const Text(
-                    'Configured Company Holidays',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                  const SizedBox(height: 8),
-                  ..._holidays.map(
-                    (h) => ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        h['name']?.toString() ?? 'Holiday',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
-                      subtitle: Text(
-                        '${h['holiday_date'] ?? h['date'] ?? ''} • ${h['type'] ?? 'Company Holiday'}',
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(
-                          Icons.delete_outline,
-                          color: Colors.red,
-                          size: 20,
-                        ),
-                        onPressed: () async {
-                          try {
-                            if (h['id'] != null) {
-                              await _supabase
-                                  .from('holidays')
-                                  .delete()
-                                  .eq('id', h['id']);
-                            }
-                          } catch (_) {}
-                          setState(() {
-                            _holidays.remove(h);
-                          });
-                          setDialogState(() {});
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Done'),
-            ),
-          ],
-        ),
+      useSafeArea: true,
+      isScrollControlled: true,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      builder: (_) => CalendarEventSheet(
+        date: day ?? DateUtils.dateOnly(DateTime.now()),
+        entries: _holidays,
+        onRemove: _removeCalendarOverride,
+        onSave: (date, name, type) async {
+          final inserted = await _supabase.from('holidays').insert({
+            'name': name,
+            'holiday_date': date.toIso8601String().split('T').first,
+            'type': type,
+          }).select().single();
+          if (!mounted) return;
+          setState(() {
+            _holidays = [..._holidays.where((row) => row['id'] != inserted['id']), inserted]
+              ..sort((a, b) => a['holiday_date'].toString().compareTo(b['holiday_date'].toString()));
+          });
+        },
       ),
     );
   }
@@ -2238,7 +2054,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             AdaptiveRow(
               children: [
                 const Text(
-                  'Upcoming Company Holidays',
+                  'Upcoming company calendar',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
@@ -2252,7 +2068,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                     onPressed: _manageHolidaysDialog,
                     icon: const Icon(Icons.edit_calendar, size: 14),
                     label: const Text(
-                      'Manage Holidays',
+                      'Manage calendar',
                       style: TextStyle(fontSize: 12),
                     ),
                   ),
@@ -2260,7 +2076,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
             ),
             const SizedBox(height: 12),
             HolidayList(
-              holidays: _holidays,
+              holidays: _holidays.where((row) => row['holiday_date'].toString().compareTo(DateTime.now().toIso8601String().split('T').first) >= 0).take(20).toList(),
               error: _holidayLoadError,
               onRetry: _loadData,
             ),
@@ -2280,7 +2096,10 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const Icon(Icons.business, color: AppThemes.orange),
                 const SizedBox(width: 8),
@@ -2288,7 +2107,6 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                   'PenguinPeak Technologies',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-                const Spacer(),
                 const Chip(
                   label: Text('Approved 🟢'),
                   visualDensity: VisualDensity.compact,
@@ -2312,15 +2130,40 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
   Widget _infoRow(String k, String v) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(k, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          Text(
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final label = Text(
+            k,
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          );
+          final value = Text(
             v,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-          ),
-        ],
+          );
+          if (box.maxWidth < 420) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [label, const SizedBox(height: 2), value],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: label),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  v,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -2381,7 +2224,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                   backgroundColor: AppThemes.orange,
                   foregroundColor: Colors.black,
                 ),
-                onPressed: _submitWallPost,
+                onPressed: _publishingPost ? null : _submitWallPost,
                 icon: const Icon(Icons.send, size: 16),
                 label: const Text('Publish Post'),
               ),
@@ -3172,6 +3015,10 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
               ),
               body: KekaEmployeeDetailWidget(
                 profile: profile,
+                isCheckedIn: (profile['id'] == _myProfile?['id'])
+                    ? (_myTodayAttendance?['check_in'] != null &&
+                          _myTodayAttendance?['check_out'] == null)
+                    : null,
                 managerName: _managerName(profile['manager_id']?.toString()),
                 onEdit: () => _editEmployee(profile),
               ),
@@ -3186,8 +3033,127 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
     final profile = _myProfile!;
     return KekaEmployeeDetailWidget(
       profile: profile,
+      isCheckedIn:
+          _myTodayAttendance?['check_in'] != null &&
+          _myTodayAttendance?['check_out'] == null,
       managerName: _managerName(profile['manager_id']?.toString()),
       onEdit: () => _editEmployee(profile),
+    );
+  }
+
+  Future<void> _editCompanyPolicyDialog() async {
+    Map<String, dynamic>? policy;
+    try {
+      policy = await _supabase.from('company_attendance_settings').select().maybeSingle();
+    } catch (error) {
+      if (mounted) AppToast.of(context).showSnackBar(SnackBar(content: Text('Could not load attendance policy: $error')));
+      return;
+    }
+    if (!mounted) return;
+    var startValue = (policy?['work_start_time'] ?? '09:00:00').toString();
+    var endValue = (policy?['work_end_time'] ?? '17:00:00').toString();
+    var graceValue = (policy?['grace_period_minutes'] ?? 15).toString();
+    var halfDayValue = (policy?['half_day_hours'] ?? 4.0).toString();
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: const Text('Manage Attendance Policy & Working Hours'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                initialValue: startValue,
+                onChanged: (value) => startValue = value,
+                decoration: const InputDecoration(
+                  labelText: 'Work Start Time (HH:MM:SS)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                initialValue: endValue,
+                onChanged: (value) => endValue = value,
+                decoration: const InputDecoration(
+                  labelText: 'Work End Time (HH:MM:SS)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                initialValue: graceValue,
+                onChanged: (value) => graceValue = value,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Grace Period (Minutes)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                initialValue: halfDayValue,
+                onChanged: (value) => halfDayValue = value,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Half Day Threshold Hours',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              try {
+                final policyData = {
+                  'work_start_time': startValue.trim(),
+                  'work_end_time': endValue.trim(),
+                  'grace_period_minutes':
+                      int.tryParse(graceValue.trim()) ?? 15,
+                  'half_day_hours':
+                      double.tryParse(halfDayValue.trim()) ?? 4.0,
+                  'updated_at': DateTime.now().toUtc().toIso8601String(),
+                };
+
+                final existing = await _supabase
+                    .from('company_attendance_settings')
+                    .select('id')
+                    .maybeSingle();
+                if (existing != null) {
+                  await _supabase
+                      .from('company_attendance_settings')
+                      .update(policyData)
+                      .eq('id', existing['id']);
+                } else {
+                  await _supabase
+                      .from('company_attendance_settings')
+                      .insert(policyData);
+                }
+
+                if (!context.mounted) return;
+                Navigator.pop(context);
+                AppToast.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ Attendance policy updated successfully!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+
+              } catch (e) {
+                if (!context.mounted) return;
+                AppToast.of(context).showSnackBar(
+                  SnackBar(content: Text('Failed to update policy: $e')),
+                );
+              }
+            },
+            child: const Text('Save Policy'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -3199,7 +3165,7 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Settings',
+              'Appearance',
               style: Theme.of(context).textTheme.headlineMedium
                   ?.copyWith(fontWeight: FontWeight.bold),
             ),
@@ -3221,6 +3187,26 @@ class _RoleDashboardScreenState extends State<RoleDashboardScreen> {
                 },
               ),
             ),
+            if (['hr', 'admin', 'super_admin'].contains(widget.role)) ...[
+              const SizedBox(height: 24),
+              Text('Company policies', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              Card(child: ListTile(
+                leading: const Icon(Icons.calendar_month),
+                title: const Text('Company working calendar'),
+                subtitle: const Text('Manage holidays and working-day overrides'),
+                onTap: _manageHolidaysDialog,
+              )),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.schedule_outlined),
+                  title: const Text('Attendance policy'),
+                  subtitle: const Text('Working hours, grace period and half-day threshold'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _editCompanyPolicyDialog,
+                ),
+              ),
+            ],
           ],
         );
       },
@@ -3239,12 +3225,15 @@ class KekaEmployeeDetailWidget extends StatefulWidget {
   final Map<String, dynamic> profile;
   final String managerName;
   final VoidCallback? onEdit;
+  // Null means attendance is unavailable; do not imply that the employee is in.
+  final bool? isCheckedIn;
 
   const KekaEmployeeDetailWidget({
     super.key,
     required this.profile,
     required this.managerName,
     this.onEdit,
+    this.isCheckedIn,
   });
 
   @override
@@ -3299,24 +3288,25 @@ class _KekaEmployeeDetailWidgetState extends State<KekaEmployeeDetailWidget>
                     ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.green,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Text(
-                    'IN',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
+                if (widget.isCheckedIn != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: widget.isCheckedIn! ? Colors.green : Colors.grey,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      widget.isCheckedIn! ? 'IN' : 'OUT',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -3625,6 +3615,44 @@ class _KekaEmployeeDetailWidgetState extends State<KekaEmployeeDetailWidget>
   Widget _buildDocumentsTab(String name) =>
       const Center(child: Text('No documents uploaded.'));
   Widget _buildAssetsTab() => const Center(child: Text('No assets assigned.'));
-  Widget _buildPerformanceTab() =>
-      const Center(child: Text('No performance reviews available.'));
+  Widget _buildPerformanceTab() => SingleChildScrollView(
+    child: PerformanceWorkspace(employeeId: widget.profile['id']?.toString()),
+  );
+}
+
+class _DockItem extends StatelessWidget {
+  const _DockItem({required this.label, required this.icon, required this.selected, required this.onTap});
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            AnimatedContainer(
+              duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 3),
+              decoration: BoxDecoration(color: selected ? colors.secondaryContainer : Colors.transparent,
+                borderRadius: BorderRadius.circular(14)),
+              child: Icon(icon, size: 20, color: selected ? colors.onSecondaryContainer : colors.onSurfaceVariant),
+            ),
+            const SizedBox(height: 2),
+            Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 11,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? colors.primary : colors.onSurfaceVariant)),
+          ]),
+        ),
+      ),
+    );
+  }
 }

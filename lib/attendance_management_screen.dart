@@ -1,3 +1,6 @@
+import 'package:penguinpeak_hrms/shared/widgets/company_calendar.dart';
+import 'features/attendance/domain/attendance_summary.dart';
+import 'features/leave/domain/leave_request.dart';
 import 'shared/widgets/app_toast.dart';
 
 import 'dart:async';
@@ -156,7 +159,9 @@ class _AttendanceManagementScreenState
           .eq('manager_status', 'approved')
           .eq('hr_status', 'approved')
           .isFilter('cancelled_at', null);
-      _myApprovedLeaves = List<Map<String, dynamic>>.from(leavesRes);
+      _myApprovedLeaves = List<Map<String, dynamic>>.from(leavesRes)
+          .map((row) => LeaveRequest(row).effectiveRow)
+          .toList();
 
       if (!mounted) return;
       setState(() => _loading = false);
@@ -240,28 +245,9 @@ class _AttendanceManagementScreenState
       // Calculate late status
       int lateMinutes = (existing['late_minutes'] as num?)?.toInt() ?? 0;
       String status = existing['status']?.toString() ?? 'Present';
-      if (_companySettings != null) {
-        final startParts = (_companySettings!['work_start_time'] ?? '09:00:00')
-            .toString()
-            .split(':');
-        final grace =
-            int.tryParse(
-              _companySettings!['grace_period_minutes'].toString(),
-            ) ??
-            15;
-        final nowLocal = DateTime.now();
-        final scheduledStart = DateTime(
-          nowLocal.year,
-          nowLocal.month,
-          nowLocal.day,
-          int.parse(startParts[0]),
-          int.parse(startParts[1]),
-        );
-        final diffMins = nowLocal.difference(scheduledStart).inMinutes;
-        if (existing.isEmpty && diffMins > grace) {
-          lateMinutes = diffMins - grace;
-          status = 'Late';
-        }
+      if (_companySettings != null && existing.isEmpty) {
+        lateMinutes = attendanceLateMinutes(DateTime.now(), _companySettings!);
+        status = lateMinutes > 0 ? 'Late' : 'Present';
       }
 
       if (existing.isNotEmpty) {
@@ -428,8 +414,8 @@ class _AttendanceManagementScreenState
             _companySettings?['half_day_hours']?.toString() ?? '4.0',
           ) ??
           4.0;
-      if (totalWorkMinutes < (halfDayHours * 60) && status != 'Late') {
-        status = 'Half Day';
+      if (status != 'Late') {
+        status = totalWorkMinutes < halfDayHours * 60 ? 'Half Day' : 'Present';
       }
 
       final nowIso = now.toUtc().toIso8601String();
@@ -1178,12 +1164,6 @@ class _AttendanceManagementScreenState
               'Attendance Management',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
-            if (_isHrOrAdmin)
-              OutlinedButton.icon(
-                onPressed: _editCompanyPolicyDialog,
-                icon: const Icon(Icons.settings_outlined, size: 16),
-                label: const Text('Policy Settings'),
-              ),
             if (_isPrivileged)
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -1332,12 +1312,30 @@ class _AttendanceManagementScreenState
                       label: const Text('Check In'),
                     ),
                     FilledButton.tonalIcon(
-                      onPressed: (_actionInProgress || !checkedIn || checkedOut)
+                      onPressed:
+                          (_actionInProgress ||
+                              !checkedIn ||
+                              checkedOut ||
+                              activeBreak)
                           ? null
                           : _checkOut,
                       icon: const Icon(Icons.logout),
                       label: const Text('Check Out'),
                     ),
+                    if (_companySettings?['breaks_enabled'] != false ||
+                        activeBreak)
+                      OutlinedButton.icon(
+                        onPressed:
+                            _actionInProgress || (!checkedIn && !activeBreak)
+                            ? null
+                            : activeBreak
+                            ? _endBreak
+                            : _startBreak,
+                        icon: Icon(
+                          activeBreak ? Icons.play_arrow : Icons.coffee,
+                        ),
+                        label: Text(activeBreak ? 'End Break' : 'Start Break'),
+                      ),
                     OutlinedButton.icon(
                       onPressed: _submitCorrectionRequest,
                       icon: const Icon(Icons.edit_calendar),
@@ -1395,117 +1393,6 @@ class _AttendanceManagementScreenState
     );
   }
 
-  Future<void> _editCompanyPolicyDialog() async {
-    final startController = TextEditingController(
-      text: _companySettings?['work_start_time'] ?? '09:00:00',
-    );
-    final endController = TextEditingController(
-      text: _companySettings?['work_end_time'] ?? '17:00:00',
-    );
-    final graceController = TextEditingController(
-      text: (_companySettings?['grace_period_minutes'] ?? 15).toString(),
-    );
-    final halfDayController = TextEditingController(
-      text: (_companySettings?['half_day_hours'] ?? 4.0).toString(),
-    );
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Manage Attendance Policy & Working Hours'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: startController,
-                decoration: const InputDecoration(
-                  labelText: 'Work Start Time (HH:MM:SS)',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: endController,
-                decoration: const InputDecoration(
-                  labelText: 'Work End Time (HH:MM:SS)',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: graceController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Grace Period (Minutes)',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: halfDayController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Half Day Threshold Hours',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              try {
-                final policyData = {
-                  'work_start_time': startController.text.trim(),
-                  'work_end_time': endController.text.trim(),
-                  'grace_period_minutes':
-                      int.tryParse(graceController.text.trim()) ?? 15,
-                  'half_day_hours':
-                      double.tryParse(halfDayController.text.trim()) ?? 4.0,
-                  'updated_at': DateTime.now().toUtc().toIso8601String(),
-                };
-
-                final existing = await _db
-                    .from('company_attendance_settings')
-                    .select('id')
-                    .maybeSingle();
-                if (existing != null) {
-                  await _db
-                      .from('company_attendance_settings')
-                      .update(policyData)
-                      .eq('id', existing['id']);
-                } else {
-                  await _db
-                      .from('company_attendance_settings')
-                      .insert(policyData);
-                }
-
-                if (!mounted) return;
-                Navigator.pop(context);
-                AppToast.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('✅ Attendance policy updated successfully!'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-                await _loadData(showLoading: false);
-              } catch (e) {
-                if (!mounted) return;
-                AppToast.of(context).showSnackBar(
-                  SnackBar(content: Text('Failed to update policy: $e')),
-                );
-              }
-            },
-            child: const Text('Save Policy'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildMonthlyAttendance() {
     final targetDate = DateTime(_selectedYear, _selectedMonth, 1);
     final monthName = _monthLabel(
@@ -1514,8 +1401,8 @@ class _AttendanceManagementScreenState
 
     final daysInMonth = DateTime(targetDate.year, targetDate.month + 1, 0).day;
 
-    int expectedWorkingDays = 0;
-    int completedDays = 0;
+    double expectedWorkingDays = 0;
+    double completedDays = 0;
     int lateDaysCount = 0;
     int absentDaysCount = 0;
     int totalMonthWorkMins = 0;
@@ -1529,6 +1416,7 @@ class _AttendanceManagementScreenState
     }
 
     final leaveDates = <String, String>{};
+    final leavePortions = <String, List<String>>{};
     for (final l in _myApprovedLeaves) {
       final start = DateTime.tryParse(l['start_date']?.toString() ?? '');
       final end = DateTime.tryParse(l['end_date']?.toString() ?? '');
@@ -1542,6 +1430,9 @@ class _AttendanceManagementScreenState
           final dStr =
               '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
           leaveDates[dStr] = lType;
+          leavePortions
+              .putIfAbsent(dStr, () => [])
+              .add(l['day_portion']?.toString() ?? 'full_day');
         }
       }
     }
@@ -1549,24 +1440,20 @@ class _AttendanceManagementScreenState
     for (int d = 1; d <= daysInMonth; d++) {
       final curr = DateTime(targetDate.year, targetDate.month, d);
       final isWeekend =
-          curr.weekday == DateTime.saturday || curr.weekday == DateTime.sunday;
+          !CompanyCalendar.of(context).works(curr);
       if (!isWeekend) {
         final dateStr =
             '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
 
-        if (leaveDates.containsKey(dateStr)) {
-          continue;
-        }
-
-        expectedWorkingDays++;
+        final required = attendanceExpectedDay(leavePortions[dateStr] ?? []);
+        if (required == 0) continue;
+        expectedWorkingDays += required;
         final rec = attendanceByDate[dateStr];
         if (rec != null) {
           final st = rec['status']?.toString();
-          if (st == 'Present' || st == 'Half Day') {
-            completedDays++;
-          } else if (st == 'Late') {
-            completedDays++;
-            lateDaysCount++;
+          if (st == 'Present' || st == 'Half Day' || st == 'Late') {
+            completedDays += (st == 'Half Day' ? 0.5 : 1.0).clamp(0, required);
+            if (st == 'Late') lateDaysCount++;
           } else if (st == 'Absent') {
             absentDaysCount++;
           }
@@ -1582,7 +1469,7 @@ class _AttendanceManagementScreenState
       0,
       expectedWorkingDays,
     );
-    final expectedMonthlyHoursMins = expectedWorkingDays * 8 * 60;
+    final expectedMonthlyHoursMins = (expectedWorkingDays * 8 * 60).round();
     final hoursProgress = expectedMonthlyHoursMins > 0
         ? (totalMonthWorkMins / expectedMonthlyHoursMins).clamp(0.0, 1.0)
         : 0.0;
@@ -1596,10 +1483,11 @@ class _AttendanceManagementScreenState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                AdaptiveRow(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         IconButton(
                           icon: const Icon(Icons.chevron_left),
@@ -1637,9 +1525,15 @@ class _AttendanceManagementScreenState
                       ],
                     ),
                     ToggleButtons(
-                      isSelected: [_isCalendarView, !_isCalendarView],
-                      onPressed: (idx) =>
-                          setState(() => _isCalendarView = idx == 0),
+                      isSelected: [
+                        _isCalendarView && !_showDetailedTable,
+                        !_isCalendarView && !_showDetailedTable,
+                        _showDetailedTable,
+                      ],
+                      onPressed: (idx) => setState(() {
+                        _isCalendarView = idx == 0;
+                        _showDetailedTable = idx == 2;
+                      }),
                       borderRadius: BorderRadius.circular(8),
                       constraints: const BoxConstraints(
                         minHeight: 32,
@@ -1654,12 +1548,16 @@ class _AttendanceManagementScreenState
                           message: 'List / Log View',
                           child: Icon(Icons.view_list, size: 18),
                         ),
+                        Tooltip(
+                          message: 'Detailed attendance table',
+                          child: Icon(Icons.table_chart_outlined, size: 18),
+                        ),
                       ],
                     ),
                   ],
                 ),
                 const SizedBox(height: 20),
-                Row(
+                AdaptiveRow(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
@@ -1671,7 +1569,7 @@ class _AttendanceManagementScreenState
                       ),
                     ),
                     Text(
-                      '$completedDays / $expectedWorkingDays working days (${(percentage * 100).toStringAsFixed(0)}%)',
+                      '${formatAttendanceDays(completedDays)} / ${formatAttendanceDays(expectedWorkingDays)} working days (${(percentage * 100).toStringAsFixed(0)}%)',
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
@@ -1692,15 +1590,15 @@ class _AttendanceManagementScreenState
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
+                AdaptiveRow(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '$completedDays completed',
+                      '${formatAttendanceDays(completedDays)} completed',
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                     Text(
-                      '$remainingDays working days remaining',
+                      '${formatAttendanceDays(remainingDays)} working days remaining',
                       style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                   ],
@@ -1712,7 +1610,7 @@ class _AttendanceManagementScreenState
                   children: [
                     _metricBadge(
                       'Present',
-                      '$completedDays',
+                      '${formatAttendanceDays(completedDays)}',
                       Icons.check_circle,
                       Colors.green,
                     ),
@@ -1724,7 +1622,7 @@ class _AttendanceManagementScreenState
                     ),
                     _metricBadge(
                       'Remaining',
-                      '$remainingDays',
+                      '${formatAttendanceDays(remainingDays)}',
                       Icons.schedule,
                       Colors.blue,
                     ),
@@ -1737,7 +1635,7 @@ class _AttendanceManagementScreenState
                   ],
                 ),
                 const SizedBox(height: 24),
-                Row(
+                AdaptiveRow(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
@@ -1770,7 +1668,9 @@ class _AttendanceManagementScreenState
           ),
         ),
         const SizedBox(height: 20),
-        if (_isCalendarView)
+        if (_showDetailedTable)
+          _buildDetailedDataTable()
+        else if (_isCalendarView)
           _buildCalendarGridView(
             daysInMonth,
             attendanceByDate,
@@ -1800,6 +1700,17 @@ class _AttendanceManagementScreenState
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 16),
+            Row(
+              children: [
+                for (final day in ['M', 'T', 'W', 'T', 'F', 'S', 'S'])
+                  Expanded(
+                    child: Center(
+                      child: Text(day, style: const TextStyle(fontSize: 11)),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -1807,15 +1718,15 @@ class _AttendanceManagementScreenState
                 crossAxisCount: 7,
                 crossAxisSpacing: 8,
                 mainAxisSpacing: 8,
-                childAspectRatio: 1.1,
+                mainAxisExtent: 88,
               ),
-              itemCount: daysInMonth,
+              itemCount: daysInMonth + targetDate.weekday - 1,
               itemBuilder: (context, idx) {
-                final d = idx + 1;
+                final d = idx - (targetDate.weekday - 1) + 1;
+                if (d < 1) return const SizedBox.shrink();
                 final curr = DateTime(targetDate.year, targetDate.month, d);
                 final isWeekend =
-                    curr.weekday == DateTime.saturday ||
-                    curr.weekday == DateTime.sunday;
+                    !CompanyCalendar.of(context).works(curr);
                 final dateStr =
                     '${curr.year}-${curr.month.toString().padLeft(2, '0')}-${curr.day.toString().padLeft(2, '0')}';
                 final rec = attendanceByDate[dateStr];
@@ -1825,10 +1736,10 @@ class _AttendanceManagementScreenState
                 Color cellColor = isWeekend
                     ? Colors.grey.withValues(alpha: 0.1)
                     : Colors.grey.withValues(alpha: 0.2);
-                String statusText = isWeekend ? 'Weekly Off' : 'No Entry';
+                String statusText = CompanyCalendar.of(context).label(curr) ?? 'No Entry';
                 IconData cellIcon = isWeekend ? Icons.weekend : Icons.remove;
 
-                if (leaveType != null) {
+                if (leaveType != null && !isWeekend) {
                   cellColor = Colors.blue.withValues(alpha: 0.2);
                   statusText = 'On Leave ($leaveType)';
                   cellIcon = Icons.event_note;
@@ -1851,10 +1762,11 @@ class _AttendanceManagementScreenState
                 }
 
                 return InkWell(
+                  key: ValueKey('attendance-day-$dateStr'),
                   onTap: () {
                     if (rec != null) {
                       _showDayDetailDialog(curr, rec);
-                    } else if (leaveType != null) {
+                    } else if (leaveType != null && !isWeekend) {
                       AppToast.of(context).showSnackBar(
                         SnackBar(
                           content: Text('On Leave: $leaveType on $dateStr'),
@@ -1882,6 +1794,8 @@ class _AttendanceManagementScreenState
                       children: [
                         Text(
                           '$d',
+                          maxLines: 1,
+                          softWrap: false,
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 13,
@@ -2459,8 +2373,10 @@ class _AttendanceManagementScreenState
           child: LinearProgressIndicator(value: progress, minHeight: 10),
         ),
         const SizedBox(height: 6),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Wrap(
+          spacing: 12,
+          runSpacing: 4,
+          alignment: WrapAlignment.spaceBetween,
           children: const [
             Text('Check in'),
             Text('Target hours'),
@@ -2495,22 +2411,24 @@ class _AttendanceManagementScreenState
               child: Icon(icon, color: color),
             ),
             const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    value,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

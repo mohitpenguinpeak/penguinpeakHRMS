@@ -260,6 +260,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: adjustmentType,
                     decoration: const InputDecoration(
                       labelText: 'Adjustment Type',
@@ -451,14 +452,9 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
         // KPI Summary Cards Header
         LayoutBuilder(
           builder: (context, constraints) {
-            final isWide = constraints.maxWidth >= 800;
-            return GridView.count(
-              crossAxisCount: isWide ? 4 : 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: isWide ? 2.0 : 1.5,
+            return AdaptiveCards(
+              minWidth: 220,
+              maxColumns: 4,
               children: [
                 MetricCard(
                   title: 'Pending Review',
@@ -523,6 +519,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                     Expanded(
                       flex: 2,
                       child: DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _timeframeFilter,
                         decoration: const InputDecoration(
                           labelText: 'Timeframe',
@@ -552,6 +549,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                     Expanded(
                       flex: 2,
                       child: DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _statusFilter,
                         decoration: const InputDecoration(
                           labelText: 'Status',
@@ -584,6 +582,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                     Expanded(
                       flex: 2,
                       child: DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _typeFilter,
                         decoration: const InputDecoration(
                           labelText: 'Request Type',
@@ -627,10 +626,11 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                       onChanged: (v) => setState(() => _searchFilter = v),
                     ),
                     const SizedBox(height: 8),
-                    Row(
+                    AdaptiveRow(
                       children: [
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            isExpanded: true,
                             value: _statusFilter,
                             decoration: const InputDecoration(
                               labelText: 'Status',
@@ -662,6 +662,7 @@ class _AttendanceAdjustmentScreenState extends State<AttendanceAdjustmentScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: DropdownButtonFormField<String>(
+                            isExpanded: true,
                             value: _typeFilter,
                             decoration: const InputDecoration(
                               labelText: 'Request Type',

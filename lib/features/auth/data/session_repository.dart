@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../push_notification_service.dart';
+import '../../../task_management_screen.dart';
 import '../domain/account_access.dart';
 
 abstract class SessionRepository {
@@ -50,6 +51,7 @@ class SupabaseSessionRepository implements SessionRepository {
         // revocation. Only suppress network errors once that removal succeeded.
         if (client.auth.currentSession != null) rethrow;
       }
+      TaskTracker.instance.resetForSignOut();
     },
   );
 }

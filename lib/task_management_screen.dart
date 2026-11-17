@@ -1,3 +1,4 @@
+import 'package:penguinpeak_hrms/shared/widgets/company_calendar.dart';
 import 'shared/widgets/app_toast.dart';
 
 import 'dart:async';
@@ -34,6 +35,7 @@ class TaskTracker {
   final ValueNotifier<bool> isTimerRunning = ValueNotifier<bool>(false);
   Timer? _liveTimer;
   bool _savingLog = false;
+  int _sessionGeneration = 0;
 
   final ValueNotifier<List<Map<String, dynamic>>> timelogs =
       ValueNotifier<List<Map<String, dynamic>>>([]);
@@ -59,8 +61,19 @@ class TaskTracker {
     _liveTimer?.cancel();
   }
 
+  void resetForSignOut() {
+    _sessionGeneration++;
+    pauseTimer();
+    _savingLog = false;
+    activeSeconds.value = 0;
+    activeTask.value = null;
+    preBreakTask = null;
+    timelogs.value = [];
+  }
+
   Future<void> stopAndLogTimer(String note) async {
     if (_savingLog) return;
+    final generation = _sessionGeneration;
     _savingLog = true;
     try {
       pauseTimer();
@@ -83,11 +96,12 @@ class TaskTracker {
           ...log,
           'employee_id': Supabase.instance.client.auth.currentUser!.id,
         });
+        if (generation != _sessionGeneration) return;
         addTimelog(log);
         activeSeconds.value = 0;
       }
     } finally {
-      _savingLog = false;
+      if (generation == _sessionGeneration) _savingLog = false;
     }
   }
 
@@ -112,8 +126,10 @@ class TaskManagementScreen extends StatefulWidget {
     super.key,
     required this.role,
     this.initialTaskId,
+    this.availabilityOnly = false,
     this.onTargetConsumed,
   });
+  final bool availabilityOnly;
   final String? initialTaskId;
   final VoidCallback? onTargetConsumed;
 
@@ -145,6 +161,17 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
   int _matrixStartOffset = 0;
   int _matrixDayCount = 14;
 
+  String? _availabilityKey;
+  Future<List<Map<String, dynamic>>>? _availabilityRequest;
+
+  Future<List<Map<String, dynamic>>> _loadAvailability(DateTime start, int days) async {
+    final rows = await _db.rpc('resource_availability', params: {
+      'p_start': start.toIso8601String().split('T').first,
+      'p_days': days,
+    });
+    return List<Map<String, dynamic>>.from(rows as List);
+  }
+
   String? get _uid => _db.auth.currentUser?.id;
 
   @override
@@ -169,6 +196,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
   Future<void> _loadData() async {
     setState(() {
       _loading = true;
+      _availabilityKey = null;
       _error = null;
     });
     try {
@@ -366,6 +394,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       final dt = checkDate.add(Duration(days: i));
       final dateOnly = DateTime(dt.year, dt.month, dt.day);
       bool onLeave = _isEmployeeOnLeave(empId, dateOnly);
+      if (!CompanyCalendar.of(context).works(dateOnly)) continue;
       int tasksCount = _getEmployeeActiveTaskCount(empId, dateOnly);
       if (!onLeave && tasksCount == 0) {
         return dateOnly;
@@ -711,6 +740,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
 
   Future<void> _upsertTask({
     Map<String, dynamic>? existing,
+    Map<String,dynamic>? parent,
     String? initialAssigneeId,
     DateTime? initialDueDate,
   }) async {
@@ -727,11 +757,22 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       );
       return;
     }
+    var assignees = _profiles;
+    if (parent != null) {
+      if (_uid == null || parent['assignee_id'] != _uid) return;
+      try {
+        assignees = await _loadAvailability(DateTime.now(), 1);
+      } catch (error) {
+        if (mounted) AppToast.of(context).showSnackBar(SnackBar(content: Text('Could not load assignees: $error')));
+        return;
+      }
+      if (!mounted) return;
+    }
     final titleController = TextEditingController(
       text: existing?['title'] ?? '',
     );
     final projectController = TextEditingController(
-      text: existing?['project']?.toString() ?? '',
+      text: (existing?['project'] ?? parent?['project'])?.toString() ?? '',
     );
     final rawDesc = _cleanDescription(existing?['description']);
     final descController = TextEditingController(
@@ -783,7 +824,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
 
           return AlertDialog(
             title: Text(
-              isEdit ? 'Edit Resource Task' : 'Book Resource / Assign Task',
+              parent != null ? 'Create subtask' : isEdit ? 'Edit Resource Task' : 'Book Resource / Assign Task',
             ),
             content: SizedBox(
               width: 500,
@@ -952,18 +993,18 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                       ),
                       items: [
                         if (assigneeId.isNotEmpty &&
-                            !_profiles.any(
+                            !assignees.any(
                               (p) => p['id'].toString() == assigneeId,
                             ))
                           DropdownMenuItem(
                             value: assigneeId,
                             child: const Text('Current assignee (unavailable)'),
                           ),
-                        ..._profiles.map(
+                        ...assignees.map(
                           (p) => DropdownMenuItem(
                             value: p['id'].toString(),
                             child: Text(
-                              '${p['full_name']} (${p['department'] ?? 'General'})',
+                              p['department'] == null ? '${p['full_name']}' : '${p['full_name']} (${p['department']})',
                             ),
                           ),
                         ),
@@ -1060,22 +1101,16 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                         dueDate ??
                         DateTime.tryParse('${existing?['created_at']}') ??
                         DateTime.now();
+                    num bookedHours = 0;
                     if (canEditDetails) {
-                      final leaves = await _db
-                          .from('leave_requests')
-                          .select()
-                          .eq('employee_id', assigneeId)
-                          .eq('manager_status', 'approved')
-                          .eq('hr_status', 'approved')
-                          .isFilter('cancelled_at', null);
-                      if (leaves.any(
-                        (row) => LeaveRequest(row).covers(bookingDate),
-                      )) {
-                        throw FormatException(
-                          '${_employeeName(assigneeId)} is on approved leave on '
-                          '${bookingDate.toIso8601String().split('T').first}. '
-                          'Choose another date or assignee.',
-                        );
+                      final roster = await _loadAvailability(bookingDate, 1);
+                      final employee = roster.where((row) => row['id'] == assigneeId).firstOrNull;
+                      if (employee == null) throw const FormatException('Choose an active assignee.');
+                      final date = bookingDate.toIso8601String().split('T').first;
+                      final day = employee['days'][date];
+                      bookedHours = day['hours'] as num;
+                      if (day['leave'] == true) {
+                        throw FormatException("${employee['full_name']} is on approved leave on $date. Choose another date or assignee.");
                       }
                     }
                     final hours = hoursController.text.trim();
@@ -1094,18 +1129,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                         : '[Booking: $hours hrs] $userDesc';
 
                     if (!isEdit) {
-                      final currentTasks = await _db
-                          .from('tasks')
-                          .select(
-                            'assignee_id, status, due_date, created_at, description',
-                          )
-                          .eq('assignee_id', assigneeId);
-                      final needsAcceptance = requiresBookingAcceptance(
-                        tasks: currentTasks,
-                        assigneeId: assigneeId,
-                        day: bookingDate,
-                        bookingHours: taskBookingHours(fullDesc),
-                      );
+                      final needsAcceptance = bookedHours + taskBookingHours(fullDesc) > 8;
                       if (needsAcceptance) {
                         initialStatus = 'pending_acceptance';
                       } else if (initialStatus == 'pending_acceptance') {
@@ -1120,6 +1144,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                       'priority': priority,
                       if (canEditDetails) 'assignee_id': assigneeId,
                       if (!isEdit) 'creator_id': _uid,
+                      if (parent != null) 'parent_task_id': parent['id'],
                       if (canEditDetails)
                         'project': projectController.text.trim(),
                       'completed_at': initialStatus == 'completed'
@@ -1264,6 +1289,16 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (task['parent_task_id'] != null) Text(
+                      'Subtask of ${_tasks.where((t) => t['id'] == task['parent_task_id']).firstOrNull?['title'] ?? 'assigned task'}',
+                    ),
+                    for (final child in _tasks.where((t) => t['parent_task_id'] == task['id']))
+                      ListTile(leading: const Icon(Icons.subdirectory_arrow_right), title: Text(child['title'] ?? 'Subtask'),
+                        subtitle: Text(_employeeName(child['assignee_id'])),
+                        onTap: () { Navigator.pop(dialogContext); _viewTaskDetails(child); }),
+                    if (isAssignee) TextButton.icon(
+                      onPressed: () { Navigator.pop(dialogContext); _upsertTask(parent: task); },
+                      icon: const Icon(Icons.add), label: const Text('Create subtask')),
                     TaskOverviewPanel(task: task, employeeName: _employeeName),
                     const SizedBox(height: 16),
                     _TaskTimerPanel(
@@ -1510,6 +1545,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.availabilityOnly) return _buildResourceAvailabilityMatrix();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1743,37 +1779,6 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     },
   );
 
-  double _getEmployeeAllocatedHours(String empId, DateTime dateOnly) {
-    double totalMins = 0;
-    for (final task in _tasks) {
-      if (task['assignee_id']?.toString() != empId) continue;
-      final status = (task['status'] ?? 'todo').toString();
-      if (status == 'completed' || status == 'declined') continue;
-
-      final dueDateStr = task['due_date']?.toString();
-      DateTime? taskDate;
-      if (dueDateStr != null && dueDateStr.isNotEmpty) {
-        taskDate = DateTime.tryParse(dueDateStr.split('T')[0]);
-      } else {
-        final createdStr = task['created_at']?.toString();
-        if (createdStr != null && createdStr.isNotEmpty) {
-          taskDate = DateTime.tryParse(createdStr.split('T')[0]);
-        }
-      }
-
-      if (taskDate != null &&
-          taskDate.year == dateOnly.year &&
-          taskDate.month == dateOnly.month &&
-          taskDate.day == dateOnly.day) {
-        final estStr = _extractBookingHours(task['description']);
-        final estNum = double.tryParse(estStr);
-        final taskHours = (estNum != null && estNum > 0) ? estNum : 2.0;
-        totalMins += (taskHours * 60);
-      }
-    }
-    return totalMins / 60.0;
-  }
-
   List<Map<String, dynamic>> _getEmployeeAssignedTasksForDate(
     String empId,
     DateTime dateOnly,
@@ -1810,11 +1815,14 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
     String empName,
     DateTime dateOnly,
     double allocatedHours,
+    bool onLeave,
   ) {
     final dateStr = '${dateOnly.day}/${dateOnly.month}/${dateOnly.year}';
     final tasks = _getEmployeeAssignedTasksForDate(empId, dateOnly);
-    final freeHours = (8.0 - allocatedHours).clamp(0.0, 8.0);
-    final progress = (allocatedHours / 8.0).clamp(0.0, 1.0);
+    final calendar = CompanyCalendar.of(context);
+    final capacity = calendar.works(dateOnly) ? 8.0 : 0.0;
+    final freeHours = (capacity - allocatedHours).clamp(0.0, 8.0);
+    final progress = capacity == 0 ? 0.0 : (allocatedHours / capacity).clamp(0.0, 1.0);
 
     showDialog(
       context: context,
@@ -1826,6 +1834,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              CalendarDayDetails(calendar: calendar, day: dateOnly, onRemoved: () => Navigator.pop(context)),
               Text(
                 'Date: $dateStr',
                 style: const TextStyle(fontSize: 13, color: Colors.grey),
@@ -1834,12 +1843,12 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Daily Capacity (8h Limit)',
+                  Text(
+                    'Daily capacity',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                   ),
                   Text(
-                    '${allocatedHours.toStringAsFixed(1)}h / 8.0h (${(progress * 100).toStringAsFixed(0)}%)',
+                    '${allocatedHours.toStringAsFixed(1)}h / ${capacity.toStringAsFixed(1)}h (${(progress * 100).toStringAsFixed(0)}%)',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: allocatedHours > 8.0
@@ -1869,7 +1878,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
               ),
               const SizedBox(height: 6),
               Text(
-                freeHours > 0
+                capacity == 0 ? 'Non-working day · no capacity available' : freeHours > 0
                     ? '🟢 ${freeHours.toStringAsFixed(1)} Hours Free Available for new tasks'
                     : allocatedHours > 8.0
                     ? '⚠️ Overloaded by ${(allocatedHours - 8.0).toStringAsFixed(1)} Hours'
@@ -1881,7 +1890,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
               ),
               const Divider(height: 24),
               Text(
-                'Assigned Tasks (${tasks.length})',
+                'Visible tasks (${tasks.length})',
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 14,
@@ -1892,7 +1901,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
                   child: Text(
-                    'No tasks assigned to this resource for this date.',
+                    'No task details are visible to you for this date.',
                   ),
                 )
               else
@@ -1951,7 +1960,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
             child: const Text('Close'),
           ),
           FilledButton.icon(
-            onPressed: _isEmployeeOnLeave(empId, dateOnly)
+            onPressed: capacity == 0 || onLeave
                 ? null
                 : () {
                     Navigator.pop(context);
@@ -1962,7 +1971,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                   },
             icon: const Icon(Icons.add, size: 16),
             label: Text(
-              _isEmployeeOnLeave(empId, dateOnly)
+              capacity == 0 ? 'Non-working day' : onLeave
                   ? 'On leave — assignment unavailable'
                   : 'Assign Task',
             ),
@@ -1984,18 +1993,52 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       (i) => startDate.add(Duration(days: i)),
     );
 
-    int totalResources = _profiles.length;
+    final key = '${dates.first.toIso8601String()}/$_matrixDayCount';
+    if (_availabilityKey != key) {
+      _availabilityKey = key;
+      _availabilityRequest = _loadAvailability(dates.first, dates.length);
+    }
+    return FutureBuilder<List<Map<String,dynamic>>>(
+      future: _availabilityRequest,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
+        if (snapshot.hasError) {
+          final error = snapshot.error;
+          final message = switch (error) {
+            PostgrestException(code: 'PGRST202') =>
+              'Resource availability setup is pending. Ask your workspace administrator to install the availability database function.',
+            PostgrestException(code: '42501') =>
+              'Access was denied. Ask HR to check your account approval and availability permissions.',
+            _ => 'Could not load resource availability. Please retry.',
+          };
+          return Column(children: [
+            Text(message, textAlign: TextAlign.center),
+            TextButton(onPressed: () => setState(() => _availabilityKey = null), child: const Text('Retry')),
+          ]);
+        }
+        return _resourceGrid(snapshot.requireData, dates, now);
+      },
+    );
+  }
+
+  Widget _resourceGrid(List<Map<String,dynamic>> resources, List<DateTime> dates, DateTime now) {
+    final byId = {for (final resource in resources) resource['id']: resource['days']};
+    dynamic dayData(String id, DateTime day) => byId[id]?[day.toIso8601String().split('T').first];
+    double hours(String id, DateTime day) => (dayData(id,day)?['hours'] as num?)?.toDouble() ?? 0;
+    int totalResources = resources.length;
     int availableResources = 0;
     int busyResources = 0;
     int overutilizedResources = 0;
 
-    for (final p in _profiles) {
+    for (final p in resources) {
       final empId = p['id']?.toString() ?? '';
-      final todayHours = _getEmployeeAllocatedHours(
+      final todayHours = hours(
         empId,
         DateTime(now.year, now.month, now.day),
       );
-      if (todayHours > 8.0) {
+      if (!CompanyCalendar.of(context).works(now) || dayData(empId,now)?['leave'] == true) {
+        continue;
+      } else if (todayHours > 8.0) {
         overutilizedResources++;
         busyResources++;
       } else if (todayHours >= 6.0) {
@@ -2009,16 +2052,9 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // Top Summary KPI Cards Header (OrangeScrum Style)
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth >= 800;
-            return GridView.count(
-              crossAxisCount: isWide ? 4 : 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisExtent: 128,
+        AdaptiveCards(
+          minWidth: 160,
+          maxColumns: 4,
               children: [
                 MetricCard(
                   title: 'Total Resources',
@@ -2045,8 +2081,6 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                   accentColor: Colors.purple,
                 ),
               ],
-            );
-          },
         ),
         const SizedBox(height: 20),
         Card(
@@ -2061,8 +2095,8 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                   crossAxisAlignment: WrapCrossAlignment.center,
                   alignment: WrapAlignment.spaceBetween,
                   children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         IconButton(
                           icon: const Icon(Icons.chevron_left),
@@ -2096,8 +2130,8 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                         ),
                       ],
                     ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         SegmentedButton<int>(
                           segments: const [
@@ -2170,7 +2204,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                         ),
                                       ),
                                       Text(
-                                        _shortWeekday(d.weekday),
+                                        CompanyCalendar.of(context).entry(d) == null ? _shortWeekday(d.weekday) : '${_shortWeekday(d.weekday)} •',
                                         style: const TextStyle(
                                           fontSize: 10,
                                           color: Colors.grey,
@@ -2181,7 +2215,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                 ),
                               ),
                             ],
-                            rows: _profiles.map((p) {
+                            rows: resources.map((p) {
                               final empId = p['id']?.toString() ?? '';
                               final name =
                                   p['full_name']?.toString() ?? 'Employee';
@@ -2189,12 +2223,12 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                               double total14DaysAllocated = 0;
                               for (final d in dates) {
                                 total14DaysAllocated +=
-                                    _getEmployeeAllocatedHours(
+                                    hours(
                                       empId,
                                       DateTime(d.year, d.month, d.day),
                                     );
                               }
-                              final totalCapacityMins = dates.length * 8;
+                              final totalCapacityMins = dates.where(CompanyCalendar.of(context).works).length * 8;
 
                               return DataRow(
                                 cells: [
@@ -2228,12 +2262,9 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                       d.month,
                                       d.day,
                                     );
-                                    final onLeave = _isEmployeeOnLeave(
-                                      empId,
-                                      dateOnly,
-                                    );
+                                    final onLeave = dayData(empId,dateOnly)?['leave'] == true;
                                     final allocatedHours =
-                                        _getEmployeeAllocatedHours(
+                                        hours(
                                           empId,
                                           dateOnly,
                                         );
@@ -2247,7 +2278,11 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                     String tooltipMsg =
                                         'Total: 8h\nBooked: 0h\nAvailable: 8h';
 
-                                    if (onLeave) {
+                                    if (!CompanyCalendar.of(context).works(dateOnly)) {
+                                      cellColor = Colors.grey;
+                                      label = 'Off';
+                                      tooltipMsg = CompanyCalendar.of(context).label(dateOnly) ?? 'Weekly off';
+                                    } else if (onLeave) {
                                       cellColor = Colors.grey;
                                       label = 'Leave';
                                       tooltipMsg = 'Status: Vacation / Leave';
@@ -2286,6 +2321,7 @@ class _TaskManagementScreenState extends State<TaskManagementScreen>
                                                 name,
                                                 dateOnly,
                                                 allocatedHours,
+                                                onLeave,
                                               ),
                                           borderRadius: BorderRadius.circular(
                                             6,

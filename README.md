@@ -2,6 +2,18 @@
 
 A new Flutter project.
 
+## QA audit
+
+See the [16 November QA report](docs/qa-audit-2026-11-16.md) for functional,
+reliability and mobile layout fixes, regression coverage and remaining device checks.
+
+## Automated performance
+
+The workspace Performance page and employee profile Performance tab now calculate
+daily, weekly, monthly, quarterly and annual KPI scorecards from tasks and
+attendance. Apply `supabase/migrations/202611160001_automated_performance.sql`
+before using them. See [scoring rules, access and deployment](docs/automated-performance.md).
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

@@ -1,3 +1,4 @@
+import 'package:penguinpeak_hrms/shared/widgets/company_calendar.dart';
 import 'package:flutter/material.dart';
 
 import '../domain/leave_request.dart';
@@ -51,7 +52,9 @@ class _TeamLeaveCalendarState extends State<TeamLeaveCalendar> {
     _selected = _month;
   });
   List<Map<String, dynamic>> _on(DateTime day) =>
-      widget.leaves.where((leave) => LeaveRequest(leave).covers(day)).toList();
+      CompanyCalendar.of(context).works(day)
+      ? widget.leaves.where((leave) => LeaveRequest(leave).covers(day)).toList()
+      : [];
   Map<String, dynamic>? _profile(dynamic id) => widget.profiles
       .where((p) => p['id']?.toString() == id?.toString())
       .firstOrNull;
@@ -293,6 +296,12 @@ class _TeamLeaveCalendarState extends State<TeamLeaveCalendar> {
                                     Text(
                                       '$number',
                                       style: TextStyle(
+                                        decoration:
+                                            CompanyCalendar.of(context)
+                                                    .label(day) ==
+                                                null
+                                            ? null
+                                            : TextDecoration.underline,
                                         fontWeight: today || selected
                                             ? FontWeight.bold
                                             : FontWeight.normal,
@@ -341,6 +350,10 @@ class _TeamLeaveCalendarState extends State<TeamLeaveCalendar> {
           ),
         ),
         const SizedBox(height: 20),
+        CalendarDayDetails(
+          calendar: CompanyCalendar.of(context),
+          day: _selected,
+        ),
         Text(
           _calendar
               ? '${_date(_selected)} · ${selectedLeaves.length} approved leaves'

@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../login_screen.dart';
 import '../../../role_dashboard_screen.dart';
+import '../../../task_management_screen.dart';
 import '../application/session_controller.dart';
 import '../data/session_repository.dart';
 import '../domain/account_access.dart';
@@ -47,6 +48,7 @@ class _SessionGateState extends State<SessionGate> with WidgetsBindingObserver {
     }
     _authChanges = client.auth.onAuthStateChange.listen((event) {
       if (event.event == AuthChangeEvent.signedOut) {
+        TaskTracker.instance.resetForSignOut();
         _controller.signedOut();
       } else if ((event.event == AuthChangeEvent.tokenRefreshed ||
               event.event == AuthChangeEvent.userUpdated) &&

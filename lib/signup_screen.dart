@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import 'shared/widgets/peak_landscape.dart';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'login_screen.dart';
@@ -11,9 +14,8 @@ class SignupScreen extends StatefulWidget {
   State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _SignupScreenState extends State<SignupScreen>
-    with SingleTickerProviderStateMixin {
-  static const orange = Color(0xFFF59E0B);
+class _SignupScreenState extends State<SignupScreen> {
+  static const orange = Color(0xFF9BDDD7);
   static const background = Color(0xFF070A0F);
 
   final _formKey = GlobalKey<FormState>();
@@ -155,26 +157,6 @@ class _SignupScreenState extends State<SignupScreen>
     super.dispose();
   }
 
-  PenguinState _getMascotState() {
-    switch (_currentStep) {
-      case 0:
-        return PenguinState.holdingSign;
-      case 1:
-        return PenguinState.typingName;
-      case 2:
-        return PenguinState.typingEmail;
-      case 3:
-      case 4:
-        return PenguinState.coveringEyes;
-      case 5:
-        return PenguinState.checkingWatch;
-      case 6:
-        return PenguinState.pendingDoorClosed;
-      default:
-        return PenguinState.idle;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final compact =
@@ -186,21 +168,7 @@ class _SignupScreenState extends State<SignupScreen>
       body: Stack(
         children: [
           // Cosmic Background Stars Gradient
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment(0, -0.4),
-                  radius: 1.3,
-                  colors: [
-                    Color(0xFF0F172A),
-                    Color(0xFF080D1A),
-                    Color(0xFF030508),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          Positioned.fill(child: const PeakLandscape(child: SizedBox.shrink())),
 
           SafeArea(
             child: Column(
@@ -265,7 +233,9 @@ class _SignupScreenState extends State<SignupScreen>
                         child: Form(
                           key: _formKey,
                           child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 380),
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 380),
                             switchInCurve: Curves.easeOutCubic,
                             switchOutCurve: Curves.easeInCubic,
                             transitionBuilder: (child, animation) {
@@ -286,7 +256,10 @@ class _SignupScreenState extends State<SignupScreen>
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   // Full Body Mascot "Peakie"
-                                  PenguinMascot(state: _getMascotState()),
+                                  Image.asset(
+                                    'assets/images/penguinpeak_logo.png',
+                                    height: 72,
+                                  ),
 
                                   const SizedBox(height: 24),
 
@@ -390,7 +363,7 @@ class _SignupScreenState extends State<SignupScreen>
                 colors: [Color(0xFF38BDF8), Color(0xFF818CF8)],
               ).createShader(bounds),
               child: const Text(
-                'Oh hey, you made it! 😊',
+                'Create your account',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white,
@@ -402,19 +375,13 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             const SizedBox(height: 12),
             const Text(
-              "I'm Peakie 🐧. And yes... despite being a penguin, I'm super excited to guide you!",
+              "Join your PenguinPeak workspace with your work email.",
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white70,
                 fontSize: 16,
                 height: 1.4,
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              "Let's get your employee account ready step by step. ✨",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white54, fontSize: 14),
             ),
             const SizedBox(height: 32),
             FilledButton.icon(
@@ -437,7 +404,7 @@ class _SignupScreenState extends State<SignupScreen>
               },
               icon: const Icon(Icons.auto_awesome, size: 20),
               label: const Text(
-                "Alright, let's go →",
+                "Get started",
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
@@ -448,7 +415,7 @@ class _SignupScreenState extends State<SignupScreen>
         return Column(
           children: [
             const Text(
-              "First off, what's your full name? ✨",
+              "Your full name",
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white,
@@ -458,7 +425,7 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             const SizedBox(height: 8),
             const Text(
-              "Let's introduce you to the rest of the Penguin team!",
+              "This name appears on your employee profile.",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white60, fontSize: 14),
             ),
@@ -482,7 +449,7 @@ class _SignupScreenState extends State<SignupScreen>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: const [
-                  Text('Press Enter ↵'),
+                  Text('Continue'),
                   SizedBox(width: 8),
                   Icon(Icons.arrow_forward_rounded, size: 18),
                 ],
@@ -499,7 +466,7 @@ class _SignupScreenState extends State<SignupScreen>
                 colors: [Color(0xFF34D399), Color(0xFF38BDF8)],
               ).createShader(bounds),
               child: const Text(
-                "Before we get into the fun stuff 👀",
+                "Your work email",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white,
@@ -510,7 +477,7 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             const SizedBox(height: 8),
             const Text(
-              "Share your work email with us. Let's make sure we stay connected! ✨",
+              "Use the address you will sign in with.",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white70, fontSize: 15),
             ),
@@ -534,7 +501,7 @@ class _SignupScreenState extends State<SignupScreen>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: const [
-                  Text('Press Enter ↵'),
+                  Text('Continue'),
                   SizedBox(width: 8),
                   Icon(Icons.arrow_forward_rounded, size: 18),
                 ],
@@ -547,7 +514,7 @@ class _SignupScreenState extends State<SignupScreen>
         return Column(
           children: [
             const Text(
-              "Create a strong secret password 🔑",
+              "Create a password",
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white,
@@ -557,7 +524,7 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             const SizedBox(height: 8),
             const Text(
-              "Don't worry, I'm covering my eyes—I won't peek! 🙈",
+              "Use at least eight characters.",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.amberAccent, fontSize: 14),
             ),
@@ -589,7 +556,7 @@ class _SignupScreenState extends State<SignupScreen>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: const [
-                  Text('Press Enter ↵'),
+                  Text('Continue'),
                   SizedBox(width: 8),
                   Icon(Icons.arrow_forward_rounded, size: 18),
                 ],
@@ -602,7 +569,7 @@ class _SignupScreenState extends State<SignupScreen>
         return Column(
           children: [
             const Text(
-              "Confirm your secret password 🔒",
+              "Confirm your password",
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white,
@@ -612,7 +579,7 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             const SizedBox(height: 8),
             const Text(
-              "Still not looking! Lock it in to complete registration. 🙈",
+              "Enter the same password again.",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.amberAccent, fontSize: 14),
             ),
@@ -651,7 +618,7 @@ class _SignupScreenState extends State<SignupScreen>
               ),
               onPressed: _nextStep,
               child: const Text(
-                'Create Account 🎉',
+                'Create Account',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
@@ -668,7 +635,7 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             SizedBox(height: 24),
             Text(
-              "Checking my watch while registering your account... ⏱️",
+              "Creating your account…",
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white,
@@ -678,7 +645,7 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             SizedBox(height: 8),
             Text(
-              "Connecting to Supabase security servers...",
+              "Submitting your details.",
               style: TextStyle(color: Colors.white60),
             ),
           ],
@@ -688,7 +655,7 @@ class _SignupScreenState extends State<SignupScreen>
         return Column(
           children: [
             const Text(
-              "The Door is Closed Right Now! 🚪🔒",
+              "Awaiting HR approval",
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.amberAccent,
@@ -698,7 +665,7 @@ class _SignupScreenState extends State<SignupScreen>
             ),
             const SizedBox(height: 12),
             const Text(
-              "The key is with HR 🔑—ask HR to approve your account to unlock the door!",
+              "You can sign in once HR approves your account.",
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white70,
@@ -773,389 +740,6 @@ class _SignupScreenState extends State<SignupScreen>
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: const BorderSide(color: orange),
-      ),
-    );
-  }
-}
-
-enum PenguinState {
-  holdingSign,
-  typingName,
-  typingEmail,
-  coveringEyes,
-  checkingWatch,
-  success,
-  pendingDoorClosed,
-  idle,
-}
-
-/// Ultra-Smooth Vector Penguin Mascot ("Peakie")
-class PenguinMascot extends StatelessWidget {
-  final PenguinState state;
-
-  const PenguinMascot({super.key, required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    const orange = Color(0xFFF59E0B);
-    final isCovering = state == PenguinState.coveringEyes;
-    final isCheckingWatch = state == PenguinState.checkingWatch;
-    final isSuccess = state == PenguinState.success;
-    final isSign = state == PenguinState.holdingSign;
-
-    return Column(
-      children: [
-        SizedBox(
-          width: 180,
-          height: 200,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // Welcome Wood Sign (Step 0)
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 350),
-                curve: Curves.easeOutCubic,
-                top: isSign ? 8 : -80,
-                right: 12,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 250),
-                  opacity: isSign ? 1.0 : 0.0,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF92400E),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: const Color(0xFFF59E0B),
-                        width: 1.5,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.46),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Text(
-                      'Welcome! 🚀',
-                      style: TextStyle(
-                        color: Colors.amberAccent,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              // Feet
-              Positioned(bottom: 6, left: 52, child: _penguinFoot()),
-              Positioned(bottom: 6, right: 52, child: _penguinFoot()),
-
-              // Main Body
-              Positioned(
-                bottom: 22,
-                child: Container(
-                  width: 110,
-                  height: 126,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F172A),
-                    borderRadius: BorderRadius.circular(56),
-                    border: Border.all(color: Colors.grey.shade800, width: 1.5),
-                  ),
-                ),
-              ),
-
-              // White Belly
-              Positioned(
-                bottom: 26,
-                child: Container(
-                  width: 72,
-                  height: 94,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(42),
-                  ),
-                ),
-              ),
-
-              // Gold Star Tie
-              Positioned(
-                top: 86,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: orange,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.star, size: 10, color: Colors.black),
-                ),
-              ),
-
-              // Head
-              Positioned(
-                top: 16,
-                child: Container(
-                  width: 94,
-                  height: 82,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F172A),
-                    borderRadius: BorderRadius.circular(42),
-                  ),
-                ),
-              ),
-
-              // White Face Patch
-              Positioned(
-                top: 28,
-                child: Container(
-                  width: 72,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(32),
-                  ),
-                ),
-              ),
-
-              // Eyes
-              Positioned(
-                top: 42,
-                left: 50,
-                child: _penguinEye(closed: isCovering),
-              ),
-              Positioned(
-                top: 42,
-                right: 50,
-                child: _penguinEye(closed: isCovering),
-              ),
-
-              // Beak
-              Positioned(
-                top: 54,
-                child: Container(
-                  width: 18,
-                  height: 14,
-                  decoration: const BoxDecoration(
-                    color: orange,
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(8),
-                      bottomRight: Radius.circular(8),
-                      topLeft: Radius.circular(4),
-                      topRight: Radius.circular(4),
-                    ),
-                  ),
-                ),
-              ),
-
-              // LEFT FLIPPER (WING)
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 350),
-                curve: Curves.easeOutCubic,
-                top: isCovering
-                    ? 32
-                    : isCheckingWatch
-                    ? 42
-                    : isSuccess
-                    ? 22
-                    : 76,
-                left: isCovering
-                    ? 48
-                    : isCheckingWatch
-                    ? 38
-                    : isSuccess
-                    ? 14
-                    : 16,
-                child: AnimatedRotation(
-                  turns: isCovering
-                      ? 0.16
-                      : isCheckingWatch
-                      ? 0.22
-                      : isSuccess
-                      ? -0.22
-                      : 0.05,
-                  duration: const Duration(milliseconds: 350),
-                  child: Container(
-                    width: 28,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0F172A),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: Colors.grey.shade800),
-                    ),
-                    child: isCheckingWatch
-                        ? const Center(
-                            child: Icon(
-                              Icons.watch_later_outlined,
-                              size: 14,
-                              color: orange,
-                            ),
-                          )
-                        : null,
-                  ),
-                ),
-              ),
-
-              // RIGHT FLIPPER (WING)
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 350),
-                curve: Curves.easeOutCubic,
-                top: isCovering
-                    ? 32
-                    : isSuccess
-                    ? 22
-                    : 76,
-                right: isCovering
-                    ? 48
-                    : isSuccess
-                    ? 14
-                    : 16,
-                child: AnimatedRotation(
-                  turns: isCovering
-                      ? -0.16
-                      : isSuccess
-                      ? 0.22
-                      : -0.05,
-                  duration: const Duration(milliseconds: 350),
-                  child: Container(
-                    width: 28,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0F172A),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: Colors.grey.shade800),
-                    ),
-                  ),
-                ),
-              ),
-
-              // CLOSED DOOR OVERLAY WHEN PENDING HR APPROVAL
-              if (state == PenguinState.pendingDoorClosed)
-                Positioned(
-                  bottom: 0,
-                  child: Container(
-                    width: 130,
-                    height: 140,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF78350F),
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(22),
-                        topRight: Radius.circular(22),
-                      ),
-                      border: Border.all(color: orange, width: 2.5),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.6),
-                          blurRadius: 16,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Container(
-                              margin: const EdgeInsets.only(right: 14),
-                              padding: const EdgeInsets.all(6),
-                              decoration: const BoxDecoration(
-                                color: orange,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.lock,
-                                size: 16,
-                                color: Colors.black,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black54,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(Icons.vpn_key, color: orange, size: 12),
-                              SizedBox(width: 4),
-                              Text(
-                                'KEY WITH HR 🔑',
-                                style: TextStyle(
-                                  color: orange,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _penguinEye({required bool closed}) {
-    if (closed) {
-      return Container(
-        width: 12,
-        height: 3,
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.circular(2),
-        ),
-      );
-    }
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: const BoxDecoration(
-        color: Colors.black,
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: Container(
-          width: 4,
-          height: 4,
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _penguinFoot() {
-    return Container(
-      width: 28,
-      height: 14,
-      decoration: const BoxDecoration(
-        color: Color(0xFFF59E0B),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(10),
-          topRight: Radius.circular(10),
-          bottomLeft: Radius.circular(4),
-          bottomRight: Radius.circular(4),
-        ),
       ),
     );
   }

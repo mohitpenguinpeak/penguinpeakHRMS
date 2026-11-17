@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 final ValueNotifier<ThemeMode> appThemeMode = ValueNotifier<ThemeMode>(
@@ -5,62 +6,62 @@ final ValueNotifier<ThemeMode> appThemeMode = ValueNotifier<ThemeMode>(
 );
 
 class AppThemes {
-  static const primaryAccent = Color(0xFF6366F1); // Electric Indigo
-  static const orange = primaryAccent; // Compatibility alias for refined palette
+  static const primaryAccent = Color(0xff357c79);
+  static const orange = primaryAccent;
 
-  static ThemeData get dark => _workspace(
-        ThemeData(
-          useMaterial3: true,
-          brightness: Brightness.dark,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: primaryAccent,
-            brightness: Brightness.dark,
-            primary: primaryAccent,
-          ),
-          scaffoldBackgroundColor: const Color(0xFF090A0F), // Graphite charcoal
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFF090A0F),
-            elevation: 0,
-          ),
-          cardTheme: CardThemeData(
-            color: const Color(0xFF13151A),
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: const BorderSide(color: Color(0xFF262B35)),
-            ),
-          ),
+  static final dark = _workspace(Brightness.dark);
+  static final light = _workspace(Brightness.light);
+
+  static ThemeData _workspace(Brightness brightness) {
+    final dark = brightness == Brightness.dark;
+    final surface = dark ? const Color(0xff1c2431) : Colors.white;
+    final background = dark ? const Color(0xff101520) : const Color(0xfff2f4f8);
+    final colors = ColorScheme.fromSeed(
+      seedColor: primaryAccent,
+      brightness: brightness,
+      primary: dark ? const Color(0xff9bddd7) : const Color(0xff256864),
+      onPrimary: dark ? const Color(0xff08283b) : Colors.white,
+      surface: surface,
+      outlineVariant: dark ? const Color(0xff344853) : const Color(0xffcbd9dd),
+    );
+    final theme = ThemeData(
+      useMaterial3: true,
+      colorScheme: colors,
+      pageTransitionsTheme: PageTransitionsTheme(
+        builders: {
+          for (final platform in TargetPlatform.values)
+            platform: const CupertinoPageTransitionsBuilder(),
+        },
+      ),
+      scaffoldBackgroundColor: background,
+      cardColor: surface,
+      appBarTheme: AppBarTheme(
+        centerTitle: false,
+        backgroundColor: background,
+        foregroundColor: colors.onSurface,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(
+          bottom: BorderSide(color: colors.outlineVariant, width: .5),
         ),
-      );
-
-  static ThemeData get light => _workspace(
-        ThemeData(
-          useMaterial3: true,
-          brightness: Brightness.light,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: primaryAccent,
-            brightness: Brightness.light,
-            primary: primaryAccent,
-          ),
-          scaffoldBackgroundColor: const Color(0xFFF8F9FA), // Off-white
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFFF8F9FA),
-            foregroundColor: Color(0xFF111318),
-            elevation: 0,
-          ),
-          cardTheme: CardThemeData(
-            color: Colors.white,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-          ),
+      ),
+      cardTheme: CardThemeData(
+        color: surface,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(color: colors.outlineVariant, width: .7),
         ),
-      );
-
-  static ThemeData _workspace(ThemeData theme) {
-    final colors = theme.colorScheme;
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        showDragHandle: true,
+        backgroundColor: surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+      ),
+    );
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.circular(12),
       borderSide: BorderSide(color: colors.outlineVariant),
@@ -68,7 +69,7 @@ class AppThemes {
     return theme.copyWith(
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: theme.cardColor,
+        fillColor: colors.surfaceContainerLow,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
           vertical: 14,

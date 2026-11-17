@@ -9,7 +9,8 @@ String _clock(int seconds) =>
     '${(seconds ~/ 3600).toString().padLeft(2, '0')}:${(seconds ~/ 60 % 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
 
 class HeaderTaskTimer extends StatefulWidget {
-  const HeaderTaskTimer({super.key});
+  const HeaderTaskTimer({super.key, this.compact = false});
+  final bool compact;
 
   @override
   State<HeaderTaskTimer> createState() => _HeaderTaskTimerState();
@@ -32,23 +33,35 @@ class _HeaderTaskTimerState extends State<HeaderTaskTimer> {
         tracker.activeSeconds,
         tracker.isTimerRunning,
       ]),
-      builder: (context, _) => TextButton.icon(
-        onPressed: () => showModalBottomSheet<void>(
+      builder: (context, _) {
+        void openLogger() => showModalBottomSheet<void>(
           context: context,
           isScrollControlled: true,
           showDragHandle: true,
           constraints: const BoxConstraints(maxWidth: 440),
           builder: (_) => _TimeLoggerSheet(note: _note),
-        ),
-        icon: Icon(
-          tracker.isTimerRunning.value ? Icons.timer : Icons.timer_outlined,
-        ),
-        label: Text(
-          tracker.activeSeconds.value > 0
-              ? _clock(tracker.activeSeconds.value)
-              : 'Timer',
-        ),
-      ),
+        );
+        if (widget.compact) {
+          return IconButton(
+            tooltip: 'Task timer: ${_clock(tracker.activeSeconds.value)}',
+            onPressed: openLogger,
+            icon: Icon(
+              tracker.isTimerRunning.value ? Icons.timer : Icons.timer_outlined,
+            ),
+          );
+        }
+        return TextButton.icon(
+          onPressed: openLogger,
+          icon: Icon(
+            tracker.isTimerRunning.value ? Icons.timer : Icons.timer_outlined,
+          ),
+          label: Text(
+            tracker.activeSeconds.value > 0
+                ? _clock(tracker.activeSeconds.value)
+                : 'Timer',
+          ),
+        );
+      },
     );
   }
 }

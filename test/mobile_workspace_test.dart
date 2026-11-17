@@ -147,7 +147,7 @@ void main() {
       if (width < 600) {
         expect(status.top, greaterThan(heading.bottom));
       } else {
-        expect(status.top, heading.top);
+        expect(status.center.dy, heading.center.dy);
       }
     });
     testWidgets('authentication fits $width', (tester) async {

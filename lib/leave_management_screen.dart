@@ -1,3 +1,4 @@
+import 'package:penguinpeak_hrms/shared/widgets/company_calendar.dart';
 import 'package:flutter/material.dart';
 
 import 'shared/widgets/adaptive_layout.dart';
@@ -109,6 +110,11 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
   }
 
   Future<void> _applyLeave() async {
+    final calendar = CompanyCalendar.of(context);
+    if (!calendar.available) {
+      _toast('Refresh the company calendar before requesting leave.');
+      return;
+    }
     final availableTypes = _balances
         .where((b) => b['employee_id']?.toString() == _uid)
         .map((b) => b['leave_type'].toString())
@@ -168,8 +174,8 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                       final now = DateTime.now();
                       final picked = await showDatePicker(
                         context: context,
-                        initialDate:
-                            startDate ?? DateTime(now.year, now.month, now.day),
+                        initialDate: startDate,
+                        selectableDayPredicate: calendar.works,
                         firstDate: DateTime(now.year - 1),
                         lastDate: DateTime(now.year + 5),
                       );
@@ -192,10 +198,8 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                         final now = DateTime.now();
                         final picked = await showDatePicker(
                           context: context,
-                          initialDate:
-                              endDate ??
-                              startDate ??
-                              DateTime(now.year, now.month, now.day),
+                          initialDate: endDate ?? startDate,
+                          selectableDayPredicate: calendar.works,
                           firstDate: startDate ?? DateTime(now.year - 1),
                           lastDate: DateTime(now.year + 5),
                         );
@@ -211,7 +215,7 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                         child: Text(
                           halfDay
                               ? '0.5 day'
-                              : '${endDate!.difference(startDate!).inDays + 1} calendar day(s)',
+                              : '${calendar.count(startDate!, endDate!)} working day(s)',
                         ),
                       ),
                     ),
@@ -366,11 +370,13 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
   Future<void> _approveRange(Map<String, dynamic> request) async {
     final first = DateTime.parse(request['start_date'].toString());
     final last = DateTime.parse(request['end_date'].toString());
+    final calendar = CompanyCalendar.of(context);
     final range = await showDateRangePicker(
       context: context,
       firstDate: first,
       lastDate: last,
-      initialDateRange: DateTimeRange(start: first, end: last),
+      selectableDayPredicate: (day, _, _) => calendar.works(day),
+      initialDateRange: calendar.works(first) && calendar.works(last) ? DateTimeRange(start: first, end: last) : null,
       helpText: 'Select dates to approve',
     );
     if (range == null || !mounted) return;
@@ -508,19 +514,34 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
         eligible.any((p) => p['id'].toString() == initialEmployeeId)
         ? initialEmployeeId!
         : eligible.first['id'].toString();
-    String leaveType = initialLeaveType ?? 'Annual';
-    final leaveTypeController = TextEditingController(text: leaveType);
+    String typeKey(String name) => name.trim().toLowerCase();
+    final labels = <String, String>{};
+    for (final name in [
+      'Annual',
+      'Sick',
+      'Casual',
+      'Unpaid Leaves',
+      ..._balances.map((row) => row['leave_type']).whereType<String>(),
+    ]) {
+      if (name.trim().isNotEmpty) {
+        labels.putIfAbsent(typeKey(name), () => name.trim());
+      }
+    }
+    String leaveType =
+        labels[typeKey(initialLeaveType ?? 'Annual')] ?? 'Annual';
+    String storedType = initialLeaveType ?? leaveType;
     final daysController = TextEditingController();
     bool unlimited = false;
     void fillAllocation() {
-      final existing = _balances
-          .where(
-            (row) =>
-                row['employee_id']?.toString() == employeeId &&
-                row['leave_type']?.toString().toLowerCase() ==
-                    leaveType.toLowerCase(),
-          )
-          .firstOrNull;
+      final matches = _balances.where(
+        (row) =>
+            row['employee_id']?.toString() == employeeId &&
+            typeKey(row['leave_type'].toString()) == typeKey(leaveType),
+      );
+      final existing =
+          matches.where((row) => row['leave_type'] == storedType).firstOrNull ??
+          matches.firstOrNull;
+      storedType = existing?['leave_type']?.toString() ?? leaveType;
       daysController.text = existing?['allocated_days']?.toString() ?? '';
       unlimited = existing?['is_unlimited'] == true;
     }
@@ -533,6 +554,7 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Manage leave balance'),
+          scrollable: true,
           content: SizedBox(
             width: 440,
             child: Column(
@@ -561,15 +583,68 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                   },
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: leaveTypeController,
-                  onChanged: (v) => setDialogState(() {
-                    leaveType = v.trim();
-                    fillAllocation();
-                  }),
-                  decoration: const InputDecoration(
-                    labelText: 'Leave type',
-                    hintText: 'Annual, Sick, Casual...',
+                DropdownButtonFormField<String>(
+                  initialValue: leaveType,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Leave type'),
+                  items: [
+                    for (final type in (labels.values.toList()..sort()))
+                      DropdownMenuItem(value: type, child: Text(type)),
+                  ],
+                  onChanged: saving
+                      ? null
+                      : (type) {
+                          if (type == null) return;
+                          setDialogState(() {
+                            leaveType = type;
+                            fillAllocation();
+                          });
+                        },
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add leave type'),
+                    onPressed: saving
+                        ? null
+                        : () async {
+                            String draft = '';
+                            final name = await showDialog<String>(
+                              context: context,
+                              builder: (prompt) => AlertDialog(
+                                title: const Text('Add leave type'),
+                                content: TextField(
+                                  autofocus: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Type name',
+                                  ),
+                                  onChanged: (value) => draft = value.trim(),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(prompt),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () {
+                                      if (draft.isNotEmpty)
+                                        Navigator.pop(prompt, draft);
+                                    },
+                                    child: const Text('Select type'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (name == null || !context.mounted) return;
+                            setDialogState(() {
+                              leaveType = labels.putIfAbsent(
+                                typeKey(name),
+                                () => name,
+                              );
+                              fillAllocation();
+                            });
+                          },
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -586,17 +661,18 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                           unlimited = value;
                         }),
                 ),
-                TextField(
-                  controller: daysController,
-                  enabled: !unlimited && !saving,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
+                if (!unlimited)
+                  TextField(
+                    controller: daysController,
+                    enabled: !saving,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Total allocated days',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                  decoration: const InputDecoration(
-                    labelText: 'Total allocated days',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
                 const SizedBox(height: 8),
                 const Text(
                   'Used days are system-controlled and are deducted only after final HR approval.',
@@ -628,7 +704,7 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
                           'set_employee_leave_allocation',
                           params: {
                             'p_employee_id': employeeId,
-                            'p_leave_type': leaveType.trim(),
+                            'p_leave_type': storedType,
                             'p_allocated_days': unlimited ? null : days,
                             'p_is_unlimited': unlimited,
                           },
@@ -653,7 +729,6 @@ class _LeaveManagementScreenState extends State<LeaveManagementScreen> {
         ),
       ),
     );
-    leaveTypeController.dispose();
     daysController.dispose();
   }
 

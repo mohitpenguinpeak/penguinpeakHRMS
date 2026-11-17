@@ -23,6 +23,8 @@ class _ChatScreenState extends State<ChatScreen> {
   RealtimeChannel? _realtimeChannel;
 
   bool _loading = true;
+  bool _sending = false;
+  int _messageGeneration = 0;
   bool _initialConversationOpened = false;
   String? _error;
   List<Map<String, dynamic>> _conversations = [];
@@ -225,7 +227,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMessages(Map<String, dynamic> conversation) async {
+    if (!mounted) return;
+    final generation = ++_messageGeneration;
     setState(() {
+      if (_activeConversation?['id'] != conversation['id']) {
+        _messages = [];
+        _messageController.clear();
+        _attachmentUrl = null;
+        _attachmentType = 'none';
+        _isUrgent = false;
+      }
       _activeConversation = conversation;
     });
     try {
@@ -233,14 +244,21 @@ class _ChatScreenState extends State<ChatScreen> {
           .from('messages')
           .select('*')
           .eq('conversation_id', conversation['id'])
-          .order('created_at', ascending: true);
-      if (!mounted) return;
-      setState(() {
-        _messages = List<Map<String, dynamic>>.from(res);
-      });
+          .order('created_at');
+      if (!mounted ||
+          generation != _messageGeneration ||
+          _activeConversation?['id'] != conversation['id'])
+        return;
+      setState(() => _messages = List<Map<String, dynamic>>.from(res));
     } catch (e) {
-      AppToast.of(context)
-          .showSnackBar(SnackBar(content: Text('Error loading messages: $e')));
+      if (!mounted || generation != _messageGeneration) return;
+      AppToast.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not load messages. Reopen the conversation to retry.',
+          ),
+        ),
+      );
     }
   }
 
@@ -278,47 +296,47 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
+    if (_sending) return;
     final text = _messageController.text.trim();
     if (text.isEmpty && _attachmentUrl == null) return;
-    if (_activeConversation == null || _uid == null) return;
-
+    final conversation = _activeConversation;
+    final uid = _uid;
+    if (conversation == null || uid == null) return;
+    final urgent = _isUrgent;
+    final attachment = _attachmentUrl;
+    setState(() => _sending = true);
     try {
-      String fullMessage = text;
-      if (_attachmentUrl != null && _attachmentUrl!.isNotEmpty) {
-        fullMessage =
-            '[ATTACHMENT:${_attachmentType.toUpperCase()}:$_attachmentUrl] $text';
+      var message = text;
+      if (attachment != null && attachment.isNotEmpty) {
+        message =
+            '[ATTACHMENT:${_attachmentType.toUpperCase()}:$attachment] $text';
       }
-      if (_isUrgent) {
-        fullMessage = '🚨 [URGENT] $fullMessage';
-      }
-
+      if (urgent) message = '🚨 [URGENT] $message';
       await _db.from('messages').insert({
-        'conversation_id': _activeConversation!['id'],
-        'sender_id': _uid,
-        'message': fullMessage,
+        'conversation_id': conversation['id'],
+        'sender_id': uid,
+        'message': message,
       });
-
-      if (_isUrgent && mounted) {
-        AppToast.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Urgent message sent.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-
-      _messageController.clear();
-      setState(() {
-        _attachmentUrl = null;
-        _attachmentType = 'none';
+      if (!mounted) return;
+      if (_activeConversation?['id'] == conversation['id']) {
+        // Do not erase a new draft typed while this request was in flight.
+        if (_messageController.text.trim() == text) _messageController.clear();
+        if (_attachmentUrl == attachment) {
+          _attachmentUrl = null;
+          _attachmentType = 'none';
+        }
         _isUrgent = false;
-      });
-
-      _loadMessages(_activeConversation!);
-      _loadData();
-    } catch (e) {
-      AppToast.of(context)
-          .showSnackBar(SnackBar(content: Text('Error sending message: $e')));
+        await _loadMessages(conversation);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      AppToast.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not send message. Your draft is retained.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -684,7 +702,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (isMobile)
                   IconButton(
                     icon: const Icon(Icons.arrow_back),
-                    onPressed: () => setState(() => _activeConversation = null),
+                    onPressed: () => setState(() {
+                      _messageGeneration++;
+                      _activeConversation = null;
+                      _messages = [];
+                    }),
                   ),
                 Expanded(
                   child: Text(
@@ -826,7 +848,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   style: IconButton.styleFrom(
                     backgroundColor: _isUrgent ? Colors.red : null,
                   ),
-                  onPressed: _sendMessage,
+                  onPressed: _sending ? null : _sendMessage,
                   icon: const Icon(Icons.send, size: 18),
                 ),
               ],

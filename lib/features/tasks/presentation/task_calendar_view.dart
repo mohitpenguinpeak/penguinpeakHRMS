@@ -1,3 +1,4 @@
+import 'package:penguinpeak_hrms/shared/widgets/company_calendar.dart';
 import 'package:flutter/material.dart';
 
 class TaskCalendarView extends StatefulWidget {
@@ -133,6 +134,12 @@ class _TaskCalendarViewState extends State<TaskCalendarView> {
                                 Text(
                                   '$number',
                                   style: TextStyle(
+                                    decoration:
+                                        CompanyCalendar.of(context)
+                                                .label(date) ==
+                                            null
+                                        ? null
+                                        : TextDecoration.underline,
                                     color: active
                                         ? colors.onPrimaryContainer
                                         : colors.onSurface,
@@ -162,6 +169,10 @@ class _TaskCalendarViewState extends State<TaskCalendarView> {
           ),
         ),
         const SizedBox(height: 16),
+        CalendarDayDetails(
+          calendar: CompanyCalendar.of(context),
+          day: _selected,
+        ),
         Text(
           'Due ${_selected.day} ${months[_selected.month - 1]} · ${selected.length} tasks',
           style: Theme.of(context).textTheme.titleMedium,
